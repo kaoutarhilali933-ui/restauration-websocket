@@ -50,55 +50,87 @@ wss.on("connection", (socket) => {
       // -------- BOOK TABLE --------
       if (message.type === "BOOK_TABLE") {
 
-        const table = restaurant.findTableById(message.tableId);
-
-        if (!table) {
-          console.log("Table not found");
-          return;
-        }
-
-        if (
-          table.isAvailable() &&
-          restaurant.isTimeSlotAvailable(
-            message.tableId,
-            message.date,
-            message.timeSlot
-          )
-        ) {
-
-          const reservation = new Reservation(
-            Date.now(),
-            message.tableId,
-            message.userId,
-            message.date,
-            message.timeSlot
-          );
-
-          const success = restaurant.makeReservation(reservation, table);
-
-          if (success) {
-            console.log("Reservation successful");
-
-            broadcast({
-              type: "BOOKING_SUCCESS",
-              tableId: table.id
-            });
-
-          } else {
-            console.log("Reservation failed");
-
-            broadcast({
-              type: "BOOKING_FAILED",
-              tableId: table.id
-            });
-          }
-
-        } else {
-          console.log("Table not available or time slot already taken");
+        // 🟢 Vérification créneau autorisé
+        if (!restaurant.allowedTimeSlots.includes(message.timeSlot)) {
+          console.log("Invalid time slot");
 
           broadcast({
             type: "BOOKING_FAILED",
-            tableId: message.tableId
+            reason: "INVALID_TIME_SLOT"
+          });
+
+          return;
+        }
+
+        // 🟢 Validation date
+        if (!message.date) {
+          console.log("Invalid date");
+
+          broadcast({
+            type: "BOOKING_FAILED",
+            reason: "INVALID_DATE"
+          });
+
+          return;
+        }
+
+        const today = new Date();
+        const bookingDate = new Date(message.date);
+        today.setHours(0, 0, 0, 0);
+
+        if (isNaN(bookingDate.getTime()) || bookingDate < today) {
+          console.log("Past or invalid date");
+
+          broadcast({
+            type: "BOOKING_FAILED",
+            reason: "INVALID_DATE"
+          });
+
+          return;
+        }
+
+        // 🟢 Nouvelle logique multi-tables
+        const table = restaurant.findAvailableTableForGuests(
+          message.numberOfGuests,
+          message.date,
+          message.timeSlot
+        );
+
+        if (!table) {
+          console.log("No available table for this number of guests");
+
+          broadcast({
+            type: "BOOKING_FAILED",
+            reason: "NO_TABLE_AVAILABLE"
+          });
+
+          return;
+        }
+
+        const reservation = new Reservation(
+          Date.now(),
+          table.id,
+          message.userId,
+          message.date,
+          message.timeSlot
+        );
+
+        const success = restaurant.makeReservation(reservation, table);
+
+        if (success) {
+          console.log("Reservation successful");
+
+          broadcast({
+            type: "BOOKING_SUCCESS",
+            tableId: table.id
+          });
+
+        } else {
+          console.log("Reservation failed");
+
+          broadcast({
+            type: "BOOKING_FAILED",
+            reason: "RESERVATION_ERROR"
           });
         }
       }
