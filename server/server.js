@@ -1,10 +1,19 @@
 const WebSocket = require("ws");
 
+const { 
+  initDb,
+  createUser,
+  getUserByEmail,
+  saveReservation
+} = require("./database");
+
 const Restaurant = require("./models/Restaurant");
 const Table = require("./models/Table");
 const Reservation = require("./models/Reservation");
 
 const PORT = 3000;
+
+initDb();
 
 const wss = new WebSocket.Server({ port: PORT });
 
@@ -17,7 +26,6 @@ console.log("WebSocket server running on ws://localhost:" + PORT);
 // -------------------------
 const restaurant = new Restaurant();
 
-// Ajouter quelques tables
 restaurant.addTable(new Table(1, 4));
 restaurant.addTable(new Table(2, 2));
 restaurant.addTable(new Table(3, 6));
@@ -41,11 +49,36 @@ wss.on("connection", (socket) => {
 
   clients.push(socket);
 
-  socket.on("message", (data) => {
+  socket.on("message", async (data) => {
     try {
       const message = JSON.parse(data);
 
       console.log("Message reçu :", message);
+
+      // -------- REGISTER --------
+      if (message.type === "REGISTER") {
+
+        const existing = await getUserByEmail(message.email);
+
+        if (existing) {
+          socket.send(JSON.stringify({
+            type: "REGISTER_FAILED",
+            reason: "Email already exists"
+          }));
+          return;
+        }
+
+        const user = await createUser({
+          email: message.email,
+          password: message.password,
+          role: "client"
+        });
+
+        socket.send(JSON.stringify({
+          type: "REGISTER_SUCCESS",
+          userId: user.id
+        }));
+      }
 
       // -------- BOOK TABLE --------
       if (message.type === "BOOK_TABLE") {
@@ -53,7 +86,7 @@ wss.on("connection", (socket) => {
         const table = restaurant.findTableById(message.tableId);
 
         if (!table) {
-          console.log("Table not found");
+          socket.send(JSON.stringify({ type: "BOOKING_FAILED" }));
           return;
         }
 
@@ -70,7 +103,14 @@ wss.on("connection", (socket) => {
           const success = restaurant.makeReservation(reservation, table);
 
           if (success) {
-            console.log("Reservation successful");
+
+            await saveReservation({
+              user_id: message.userId,
+              table_id: message.tableId,
+              date: message.date,
+              time: message.timeSlot,
+              guests: message.guests || 1
+            });
 
             broadcast({
               type: "BOOKING_SUCCESS",
@@ -78,21 +118,16 @@ wss.on("connection", (socket) => {
             });
 
           } else {
-            console.log("Reservation failed");
+            socket.send(JSON.stringify({ type: "BOOKING_FAILED" }));
           }
 
         } else {
-          console.log("Table not available");
-
-          broadcast({
-            type: "BOOKING_FAILED",
-            tableId: table.id
-          });
+          socket.send(JSON.stringify({ type: "BOOKING_FAILED" }));
         }
       }
 
     } catch (error) {
-      console.log("Invalid JSON message");
+      console.log("Invalid JSON message", error);
     }
   });
 
