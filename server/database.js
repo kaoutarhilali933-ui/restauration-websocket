@@ -8,7 +8,9 @@ const db = new sqlite3.Database(DB_PATH, (err) => {
   else console.log("✅ SQLite connected");
 });
 
+// -------------------------
 // Helper Promises
+// -------------------------
 function run(sql, params = []) {
   return new Promise((resolve, reject) => {
     db.run(sql, params, function (err) {
@@ -36,6 +38,9 @@ function all(sql, params = []) {
   });
 }
 
+// -------------------------
+// INIT DB
+// -------------------------
 async function initDb() {
   await run(`PRAGMA foreign_keys = ON;`);
 
@@ -51,7 +56,7 @@ async function initDb() {
 
   await run(`
     CREATE TABLE IF NOT EXISTS tables (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      id INTEGER PRIMARY KEY,
       number INTEGER UNIQUE NOT NULL,
       seats INTEGER NOT NULL
     );
@@ -75,8 +80,20 @@ async function initDb() {
   console.log("✅ Tables created");
 }
 
-/* ---------------- FUNCTIONS ---------------- */
+// -------------------------
+// SEED TABLES (IMPORTANT)
+// -------------------------
+async function seedTables() {
+  await run(`INSERT OR IGNORE INTO tables (id, number, seats) VALUES (1, 1, 4)`);
+  await run(`INSERT OR IGNORE INTO tables (id, number, seats) VALUES (2, 2, 2)`);
+  await run(`INSERT OR IGNORE INTO tables (id, number, seats) VALUES (3, 3, 6)`);
 
+  console.log("✅ Default tables inserted");
+}
+
+// -------------------------
+// FUNCTIONS
+// -------------------------
 async function createUser({ email, password, role = "client" }) {
   const result = await run(
     `INSERT INTO users (email, password, role) VALUES (?, ?, ?)`,
@@ -87,6 +104,13 @@ async function createUser({ email, password, role = "client" }) {
 
 async function getUserByEmail(email) {
   return await get(`SELECT * FROM users WHERE email = ?`, [email]);
+}
+
+async function login(email, password) {
+  return await get(
+    `SELECT * FROM users WHERE email = ? AND password = ?`,
+    [email, password]
+  );
 }
 
 async function saveReservation({ user_id, table_id, date, time, guests }) {
@@ -110,8 +134,10 @@ async function getReservations() {
 
 module.exports = {
   initDb,
+  seedTables,
   createUser,
   getUserByEmail,
+  login,
   saveReservation,
   getReservations
 };
