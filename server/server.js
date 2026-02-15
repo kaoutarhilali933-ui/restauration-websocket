@@ -57,7 +57,14 @@ wss.on("connection", (socket) => {
           return;
         }
 
-        if (table.isAvailable()) {
+        if (
+          table.isAvailable() &&
+          restaurant.isTimeSlotAvailable(
+            message.tableId,
+            message.date,
+            message.timeSlot
+          )
+        ) {
 
           const reservation = new Reservation(
             Date.now(),
@@ -79,15 +86,46 @@ wss.on("connection", (socket) => {
 
           } else {
             console.log("Reservation failed");
+
+            broadcast({
+              type: "BOOKING_FAILED",
+              tableId: table.id
+            });
           }
 
         } else {
-          console.log("Table not available");
+          console.log("Table not available or time slot already taken");
 
           broadcast({
             type: "BOOKING_FAILED",
+            tableId: message.tableId
+          });
+        }
+      }
+
+      // -------- RELEASE TABLE --------
+      if (message.type === "RELEASE_TABLE") {
+
+        const table = restaurant.findTableById(message.tableId);
+
+        if (!table) {
+          console.log("Table not found");
+          return;
+        }
+
+        if (!table.isAvailable()) {
+
+          restaurant.releaseTable(table);
+
+          console.log("Table released");
+
+          broadcast({
+            type: "TABLE_RELEASED",
             tableId: table.id
           });
+
+        } else {
+          console.log("Table already available");
         }
       }
 
