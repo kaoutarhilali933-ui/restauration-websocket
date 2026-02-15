@@ -1,6 +1,9 @@
 function Restaurant() {
   this.tables = [];
   this.reservations = [];
+
+  // 🟩 Créneaux autorisés
+  this.allowedTimeSlots = ["12h-14h", "19h-21h"];
 }
 
 Restaurant.prototype.addTable = function (table) {
@@ -44,6 +47,17 @@ Restaurant.prototype.isTimeSlotAvailable = function (tableId, date, timeSlot) {
       reservation.tableId === tableId &&
       reservation.date === date &&
       reservation.timeSlot === timeSlot
+  );
+
+};
+
+// 🟢 NOUVELLE MÉTHODE — Gestion multi-tables
+Restaurant.prototype.findAvailableTableForGuests = function (numberOfGuests, date, timeSlot) {
+
+  return this.tables.find((table) =>
+    table.capacity >= numberOfGuests &&
+    table.isAvailable() &&
+    this.isTimeSlotAvailable(table.id, date, timeSlot)
   );
 
 };
