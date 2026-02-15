@@ -1,13 +1,30 @@
 const WebSocket = require("ws");
 
+const {
+  initDb,
+  seedTables,
+  createUser,
+  getUserByEmail,
+  login,
+  saveReservation,
+  getReservations
+} = require("./database");
+
 const Restaurant = require("./models/Restaurant");
 const Table = require("./models/Table");
 const Reservation = require("./models/Reservation");
 
 const PORT = 3000;
 
-const wss = new WebSocket.Server({ port: PORT });
+// -------------------------
+// INIT DB
+// -------------------------
+(async () => {
+  await initDb();
+  await seedTables();
+})();
 
+const wss = new WebSocket.Server({ port: PORT });
 const clients = [];
 
 console.log("WebSocket server running on ws://localhost:" + PORT);
@@ -17,13 +34,10 @@ console.log("WebSocket server running on ws://localhost:" + PORT);
 // -------------------------
 const restaurant = new Restaurant();
 
-// Ajouter quelques tables
 restaurant.addTable(new Table(1, 4));
 restaurant.addTable(new Table(2, 2));
 restaurant.addTable(new Table(3, 6));
 
-// -------------------------
-// BROADCAST
 // -------------------------
 function broadcast(message) {
   clients.forEach((client) => {
@@ -34,43 +48,89 @@ function broadcast(message) {
 }
 
 // -------------------------
-// CONNECTION
-// -------------------------
 wss.on("connection", (socket) => {
   console.log("Client connected");
 
+  let currentUser = null;
   clients.push(socket);
 
-  socket.on("message", (data) => {
+  socket.on("message", async (data) => {
     try {
       const message = JSON.parse(data);
-
       console.log("Message reçu :", message);
 
-      // -------- BOOK TABLE --------
-      if (message.type === "BOOK_TABLE") {
+      // ---------------- REGISTER ----------------
+      if (message.type === "REGISTER") {
 
-        // 🟢 Vérification créneau autorisé
-        if (!restaurant.allowedTimeSlots.includes(message.timeSlot)) {
-          console.log("Invalid time slot");
-
-          broadcast({
-            type: "BOOKING_FAILED",
-            reason: "INVALID_TIME_SLOT"
-          });
-
+        const existing = await getUserByEmail(message.email);
+        if (existing) {
+          socket.send(JSON.stringify({
+            type: "REGISTER_FAILED",
+            reason: "Email already exists"
+          }));
           return;
         }
 
-        // 🟢 Validation date
-        if (!message.date) {
-          console.log("Invalid date");
+        const user = await createUser({
+          email: message.email,
+          password: message.password,
+          role: message.role || "client"
+        });
 
-          broadcast({
+        socket.send(JSON.stringify({
+          type: "REGISTER_SUCCESS",
+          userId: user.id
+        }));
+      }
+
+      // ---------------- LOGIN ----------------
+      if (message.type === "LOGIN") {
+
+        const user = await login(message.email, message.password);
+
+        if (!user) {
+          socket.send(JSON.stringify({
+            type: "LOGIN_FAILED",
+            reason: "Invalid email or password"
+          }));
+          return;
+        }
+
+        currentUser = user;
+
+        socket.send(JSON.stringify({
+          type: "LOGIN_SUCCESS",
+          userId: user.id,
+          role: user.role
+        }));
+      }
+
+      // ---------------- BOOK TABLE ----------------
+      if (message.type === "BOOK_TABLE") {
+
+        if (!currentUser) {
+          socket.send(JSON.stringify({
+            type: "UNAUTHORIZED",
+            reason: "You must login first"
+          }));
+          return;
+        }
+
+        // Vérifier créneau autorisé
+        if (!restaurant.allowedTimeSlots.includes(message.timeSlot)) {
+          socket.send(JSON.stringify({
+            type: "BOOKING_FAILED",
+            reason: "INVALID_TIME_SLOT"
+          }));
+          return;
+        }
+
+        // Vérifier date
+        if (!message.date) {
+          socket.send(JSON.stringify({
             type: "BOOKING_FAILED",
             reason: "INVALID_DATE"
-          });
-
+          }));
           return;
         }
 
@@ -79,17 +139,14 @@ wss.on("connection", (socket) => {
         today.setHours(0, 0, 0, 0);
 
         if (isNaN(bookingDate.getTime()) || bookingDate < today) {
-          console.log("Past or invalid date");
-
-          broadcast({
+          socket.send(JSON.stringify({
             type: "BOOKING_FAILED",
             reason: "INVALID_DATE"
-          });
-
+          }));
           return;
         }
 
-        // 🟢 Nouvelle logique multi-tables
+        // Trouver table disponible
         const table = restaurant.findAvailableTableForGuests(
           message.numberOfGuests,
           message.date,
@@ -97,78 +154,70 @@ wss.on("connection", (socket) => {
         );
 
         if (!table) {
-          console.log("No available table for this number of guests");
-
-          broadcast({
+          socket.send(JSON.stringify({
             type: "BOOKING_FAILED",
             reason: "NO_TABLE_AVAILABLE"
-          });
-
+          }));
           return;
         }
 
         const reservation = new Reservation(
           Date.now(),
           table.id,
-          message.userId,
+          currentUser.id,
           message.date,
           message.timeSlot
         );
 
         const success = restaurant.makeReservation(reservation, table);
 
-        if (success) {
-          console.log("Reservation successful");
-
-          broadcast({
-            type: "BOOKING_SUCCESS",
-            tableId: table.id
-          });
-
-        } else {
-          console.log("Reservation failed");
-
-          broadcast({
-            type: "BOOKING_FAILED",
-            reason: "RESERVATION_ERROR"
-          });
-        }
-      }
-
-      // -------- RELEASE TABLE --------
-      if (message.type === "RELEASE_TABLE") {
-
-        const table = restaurant.findTableById(message.tableId);
-
-        if (!table) {
-          console.log("Table not found");
+        if (!success) {
+          socket.send(JSON.stringify({
+            type: "BOOKING_FAILED"
+          }));
           return;
         }
 
-        if (!table.isAvailable()) {
+        // Sauvegarde DB
+        await saveReservation({
+          user_id: currentUser.id,
+          table_id: table.id,
+          date: message.date,
+          time: message.timeSlot,
+          guests: message.numberOfGuests
+        });
 
-          restaurant.releaseTable(table);
+        broadcast({
+          type: "BOOKING_SUCCESS",
+          tableId: table.id
+        });
+      }
 
-          console.log("Table released");
+      // ---------------- ADMIN GET RESERVATIONS ----------------
+      if (message.type === "GET_RESERVATIONS") {
 
-          broadcast({
-            type: "TABLE_RELEASED",
-            tableId: table.id
-          });
-
-        } else {
-          console.log("Table already available");
+        if (!currentUser || currentUser.role !== "admin") {
+          socket.send(JSON.stringify({
+            type: "UNAUTHORIZED"
+          }));
+          return;
         }
+
+        const reservations = await getReservations();
+
+        socket.send(JSON.stringify({
+          type: "RESERVATIONS_LIST",
+          data: reservations
+        }));
       }
 
     } catch (error) {
-      console.log("Invalid JSON message");
+      console.log("Invalid JSON message", error);
     }
   });
 
   socket.on("close", () => {
     console.log("Client disconnected");
-
     const index = clients.indexOf(socket);
     if (index !== -1) {
       clients.splice(index, 1);
