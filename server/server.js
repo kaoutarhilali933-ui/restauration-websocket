@@ -10,6 +10,8 @@ const {
   getReservations
 } = require("./database");
 
+const sqlite3 = require("sqlite3").verbose();
+
 const Restaurant = require("./models/Restaurant");
 const Table = require("./models/Table");
 const Reservation = require("./models/Reservation");
@@ -116,7 +118,6 @@ wss.on("connection", (socket) => {
           return;
         }
 
-        // Vérifier créneau autorisé
         if (!restaurant.allowedTimeSlots.includes(message.timeSlot)) {
           socket.send(JSON.stringify({
             type: "BOOKING_FAILED",
@@ -125,7 +126,6 @@ wss.on("connection", (socket) => {
           return;
         }
 
-        // Vérifier date
         if (!message.date) {
           socket.send(JSON.stringify({
             type: "BOOKING_FAILED",
@@ -146,7 +146,6 @@ wss.on("connection", (socket) => {
           return;
         }
 
-        // Trouver table disponible
         const table = restaurant.findAvailableTableForGuests(
           message.numberOfGuests,
           message.date,
@@ -178,7 +177,6 @@ wss.on("connection", (socket) => {
           return;
         }
 
-        // Sauvegarde DB
         await saveReservation({
           user_id: currentUser.id,
           table_id: table.id,
@@ -209,6 +207,42 @@ wss.on("connection", (socket) => {
           type: "RESERVATIONS_LIST",
           data: reservations
         }));
+      }
+
+      // ---------------- DELETE RESERVATION ----------------
+      if (message.type === "DELETE_RESERVATION") {
+
+        if (!currentUser || currentUser.role !== "admin") {
+          socket.send(JSON.stringify({
+            type: "UNAUTHORIZED"
+          }));
+          return;
+        }
+
+        const reservationId = message.reservationId;
+
+        const db = new sqlite3.Database("./database.sqlite");
+
+        db.get("SELECT * FROM reservations WHERE id = ?", [reservationId], (err, reservation) => {
+
+          if (!reservation) return;
+
+          // Supprimer en base
+          db.run("DELETE FROM reservations WHERE id = ?", [reservationId]);
+
+          // Libérer table en mémoire
+          const table = restaurant.tables.find(t => t.id === reservation.table_id);
+          if (table) {
+            table.reservations = [];
+          }
+
+          broadcast({
+            type: "RESERVATION_DELETED",
+            reservationId,
+            tableId: reservation.table_id
+          });
+
+        });
       }
 
     } catch (error) {
