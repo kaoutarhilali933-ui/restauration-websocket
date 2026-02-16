@@ -3,14 +3,11 @@ body {
   margin: 30px;
 }
 
-header {
-  margin-bottom: 20px;
-}
-
 section {
-  margin-bottom: 25px;
-  padding: 10px;
+  margin-bottom: 30px;
+  padding: 15px;
   border: 1px solid #ddd;
+  border-radius: 8px;
 }
 
 button {
@@ -19,33 +16,27 @@ button {
   cursor: pointer;
 }
 
-/* =========================
-   TABLES UI
-========================= */
-
-#tablesContainer {
+.tables-container {
   display: flex;
   gap: 20px;
-  margin-top: 20px;
 }
 
 .table-card {
+  width: 200px;
   padding: 15px;
-  border-radius: 8px;
-  width: 180px;
+  border-radius: 10px;
   text-align: center;
-  font-weight: bold;
+  transition: 0.3s;
 }
 
 .available {
-  background-color: #d4edda;
+  background-color: #c8e6c9;
 }
 
 .reserved {
-  background-color: #f8d7da;
+  background-color: #ffcdd2;
 }
 
-.table-card button {
-  margin-top: 10px;
-  padding: 5px 10px;
+.table-card h3 {
+  margin-top: 0;
 }
