@@ -1,5 +1,11 @@
 const socket = new WebSocket("ws://localhost:3000");
+
 let currentUserId = null;
+let currentUserRole = null;
+
+/* =========================
+   WEBSOCKET
+========================= */
 
 socket.onopen = () => {
   log("Connected to server");
@@ -9,34 +15,46 @@ socket.onmessage = (event) => {
   const data = JSON.parse(event.data);
   log(JSON.stringify(data));
 
+  // REGISTER SUCCESS
+  if (data.type === "REGISTER_SUCCESS") {
+    showAuthMessage("Registration successful 🎉", true);
+  }
+
+  if (data.type === "REGISTER_FAILED") {
+    showAuthMessage("Registration failed ❌ (" + data.reason + ")", false);
+  }
+
   // LOGIN SUCCESS
   if (data.type === "LOGIN_SUCCESS") {
     currentUserId = data.userId;
+    currentUserRole = data.role;
+
+    showAuthMessage("Login successful ✅", true);
+    showSectionsByRole();
   }
 
-  // BOOKING SUCCESS
+  if (data.type === "LOGIN_FAILED") {
+    showAuthMessage("Login failed ❌ (" + data.reason + ")", false);
+  }
+
+  // BOOKING
   if (data.type === "BOOKING_SUCCESS") {
     showBookingMessage("Reservation successful 🎉", true);
-    markTableAsReserved(data.tableId);
   }
 
-  // BOOKING FAILED
   if (data.type === "BOOKING_FAILED") {
     showBookingMessage("Reservation failed ❌ (" + data.reason + ")", false);
   }
 
-  // UNAUTHORIZED
-  if (data.type === "UNAUTHORIZED") {
-    showBookingMessage("You must login first 🔒", false);
+  // ADMIN
+  if (data.type === "RESERVATIONS_LIST") {
+    document.getElementById("adminOutput").textContent =
+      JSON.stringify(data.data, null, 2);
   }
-};
 
-socket.onerror = () => {
-  log("WebSocket error");
-};
-
-socket.onclose = () => {
-  log("Disconnected from server");
+  if (data.type === "UNAUTHORIZED") {
+    showBookingMessage("Unauthorized ❌", false);
+  }
 };
 
 function log(message) {
@@ -44,41 +62,46 @@ function log(message) {
 }
 
 /* =========================
-   AUTH
+   AUTH FUNCTIONS
 ========================= */
 
-function registerClient() {
+function register() {
+  const email = document.getElementById("registerEmail").value;
+  const password = document.getElementById("registerPassword").value;
+  const role = document.getElementById("registerRole").value;
+
   socket.send(JSON.stringify({
     type: "REGISTER",
-    email: "test@test.com",
-    password: "1234",
-    role: "client"
+    email,
+    password,
+    role
   }));
 }
 
-function registerAdmin() {
-  socket.send(JSON.stringify({
-    type: "REGISTER",
-    email: "admin@test.com",
-    password: "1234",
-    role: "admin"
-  }));
-}
+function login() {
+  const email = document.getElementById("loginEmail").value;
+  const password = document.getElementById("loginPassword").value;
 
-function loginClient() {
   socket.send(JSON.stringify({
     type: "LOGIN",
-    email: "test@test.com",
-    password: "1234"
+    email,
+    password
   }));
 }
 
-function loginAdmin() {
-  socket.send(JSON.stringify({
-    type: "LOGIN",
-    email: "admin@test.com",
-    password: "1234"
-  }));
+function showAuthMessage(message, success) {
+  const element = document.getElementById("authMessage");
+  element.textContent = message;
+  element.style.color = success ? "green" : "red";
+}
+
+function showSectionsByRole() {
+  document.getElementById("authSection").style.display = "none";
+  document.getElementById("bookingSection").style.display = "block";
+
+  if (currentUserRole === "admin") {
+    document.getElementById("adminSection").style.display = "block";
+  }
 }
 
 /* =========================
@@ -86,51 +109,27 @@ function loginAdmin() {
 ========================= */
 
 function bookTable() {
-
-  if (!currentUserId) {
-    showBookingMessage("You must login first 🔒", false);
-    return;
-  }
-
   const date = document.getElementById("date").value;
   const timeSlot = document.getElementById("timeSlot").value;
   const guests = parseInt(document.getElementById("guests").value);
 
   socket.send(JSON.stringify({
     type: "BOOK_TABLE",
-    date: date,
-    timeSlot: timeSlot,
+    date,
+    timeSlot,
     numberOfGuests: guests
   }));
 }
-
-/* =========================
-   TABLE UI UPDATE
-========================= */
-
-function markTableAsReserved(tableId) {
-  const table = document.querySelector(`[data-table-id="${tableId}"]`);
-  if (!table) return;
-
-  table.classList.remove("available");
-  table.classList.add("reserved");
-
-  table.querySelector(".status-text").textContent = "Reserved";
-}
-
-function manualReserve(id) {
-  markTableAsReserved(id);
-}
-
-/* =========================
-   UI MESSAGE
-========================= */
 
 function showBookingMessage(message, success) {
   const element = document.getElementById("bookingMessage");
   element.textContent = message;
   element.style.color = success ? "green" : "red";
 }
+
+/* =========================
+   ADMIN
+========================= */
 
 function getReservations() {
   socket.send(JSON.stringify({
