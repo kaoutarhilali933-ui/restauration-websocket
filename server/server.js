@@ -14,13 +14,10 @@ const sqlite3 = require("sqlite3").verbose();
 
 const Restaurant = require("./models/Restaurant");
 const Table = require("./models/Table");
-const Reservation = require("./models/Reservation");
 
 const PORT = 3000;
 
-// -------------------------
-// INIT DB
-// -------------------------
+// ---------------- INIT DB ----------------
 (async () => {
   await initDb();
   await seedTables();
@@ -31,37 +28,36 @@ const clients = [];
 
 console.log("WebSocket server running on ws://localhost:" + PORT);
 
-// -------------------------
-// INITIALISATION RESTAURANT
-// -------------------------
+// ---------------- RESTAURANT ----------------
 const restaurant = new Restaurant();
-
 restaurant.addTable(new Table(1, 4));
 restaurant.addTable(new Table(2, 2));
 restaurant.addTable(new Table(3, 6));
 
-// -------------------------
+// ---------------- BROADCAST ----------------
 function broadcast(message) {
-  clients.forEach((client) => {
+  clients.forEach(client => {
     if (client.readyState === WebSocket.OPEN) {
       client.send(JSON.stringify(message));
     }
   });
 }
 
-// -------------------------
+// ---------------- CONNECTION ----------------
 wss.on("connection", (socket) => {
+
   console.log("Client connected");
 
   let currentUser = null;
   clients.push(socket);
 
   socket.on("message", async (data) => {
+
     try {
       const message = JSON.parse(data);
       console.log("Message reçu :", message);
 
-      // ---------------- REGISTER ----------------
+      // ================= REGISTER =================
       if (message.type === "REGISTER") {
 
         const existing = await getUserByEmail(message.email);
@@ -85,7 +81,7 @@ wss.on("connection", (socket) => {
         }));
       }
 
-      // ---------------- LOGIN ----------------
+      // ================= LOGIN =================
       if (message.type === "LOGIN") {
 
         const user = await login(message.email, message.password);
@@ -107,7 +103,7 @@ wss.on("connection", (socket) => {
         }));
       }
 
-      // ---------------- BOOK TABLE ----------------
+      // ================= BOOK TABLE (DATE AWARE) =================
       if (message.type === "BOOK_TABLE") {
 
         if (!currentUser) {
@@ -118,7 +114,17 @@ wss.on("connection", (socket) => {
           return;
         }
 
-        if (!restaurant.allowedTimeSlots.includes(message.timeSlot)) {
+        const { date, timeSlot, numberOfGuests } = message;
+
+        if (!date || !timeSlot || !numberOfGuests) {
+          socket.send(JSON.stringify({
+            type: "BOOKING_FAILED",
+            reason: "INVALID_DATA"
+          }));
+          return;
+        }
+
+        if (!restaurant.allowedTimeSlots.includes(timeSlot)) {
           socket.send(JSON.stringify({
             type: "BOOKING_FAILED",
             reason: "INVALID_TIME_SLOT"
@@ -126,17 +132,9 @@ wss.on("connection", (socket) => {
           return;
         }
 
-        if (!message.date) {
-          socket.send(JSON.stringify({
-            type: "BOOKING_FAILED",
-            reason: "INVALID_DATE"
-          }));
-          return;
-        }
-
         const today = new Date();
-        const bookingDate = new Date(message.date);
-        today.setHours(0, 0, 0, 0);
+        const bookingDate = new Date(date);
+        today.setHours(0,0,0,0);
 
         if (isNaN(bookingDate.getTime()) || bookingDate < today) {
           socket.send(JSON.stringify({
@@ -146,13 +144,29 @@ wss.on("connection", (socket) => {
           return;
         }
 
-        const table = restaurant.findAvailableTableForGuests(
-          message.numberOfGuests,
-          message.date,
-          message.timeSlot
+        const possibleTables = restaurant.tables.filter(
+          t => t.capacity >= numberOfGuests
         );
 
-        if (!table) {
+        const existingReservations = await getReservations();
+
+        let selectedTable = null;
+
+        for (let table of possibleTables) {
+
+          const conflict = existingReservations.find(r =>
+            r.table_id === table.id &&
+            r.date === date &&
+            r.time === timeSlot
+          );
+
+          if (!conflict) {
+            selectedTable = table;
+            break;
+          }
+        }
+
+        if (!selectedTable) {
           socket.send(JSON.stringify({
             type: "BOOKING_FAILED",
             reason: "NO_TABLE_AVAILABLE"
@@ -160,38 +174,21 @@ wss.on("connection", (socket) => {
           return;
         }
 
-        const reservation = new Reservation(
-          Date.now(),
-          table.id,
-          currentUser.id,
-          message.date,
-          message.timeSlot
-        );
-
-        const success = restaurant.makeReservation(reservation, table);
-
-        if (!success) {
-          socket.send(JSON.stringify({
-            type: "BOOKING_FAILED"
-          }));
-          return;
-        }
-
         await saveReservation({
           user_id: currentUser.id,
-          table_id: table.id,
-          date: message.date,
-          time: message.timeSlot,
-          guests: message.numberOfGuests
+          table_id: selectedTable.id,
+          date,
+          time: timeSlot,
+          guests: numberOfGuests
         });
 
         broadcast({
           type: "BOOKING_SUCCESS",
-          tableId: table.id
+          tableId: selectedTable.id
         });
       }
 
-      // ---------------- ADMIN GET RESERVATIONS ----------------
+      // ================= ADMIN GET RESERVATIONS =================
       if (message.type === "GET_RESERVATIONS") {
 
         if (!currentUser || currentUser.role !== "admin") {
@@ -209,7 +206,7 @@ wss.on("connection", (socket) => {
         }));
       }
 
-      // ---------------- DELETE RESERVATION ----------------
+      // ================= DELETE RESERVATION =================
       if (message.type === "DELETE_RESERVATION") {
 
         if (!currentUser || currentUser.role !== "admin") {
@@ -219,26 +216,17 @@ wss.on("connection", (socket) => {
           return;
         }
 
-        const reservationId = message.reservationId;
-
         const db = new sqlite3.Database("./database.sqlite");
 
-        db.get("SELECT * FROM reservations WHERE id = ?", [reservationId], (err, reservation) => {
+        db.get("SELECT * FROM reservations WHERE id = ?", [message.reservationId], (err, reservation) => {
 
           if (!reservation) return;
 
-          // Supprimer en base
-          db.run("DELETE FROM reservations WHERE id = ?", [reservationId]);
-
-          // Libérer table en mémoire
-          const table = restaurant.tables.find(t => t.id === reservation.table_id);
-          if (table) {
-            table.reservations = [];
-          }
+          db.run("DELETE FROM reservations WHERE id = ?", [message.reservationId]);
 
           broadcast({
             type: "RESERVATION_DELETED",
-            reservationId,
+            reservationId: message.reservationId,
             tableId: reservation.table_id
           });
 
@@ -248,6 +236,7 @@ wss.on("connection", (socket) => {
     } catch (error) {
       console.log("Invalid JSON message", error);
     }
+
   });
 
   socket.on("close", () => {
@@ -257,4 +246,5 @@ wss.on("connection", (socket) => {
       clients.splice(index, 1);
     }
   });
+
 });
