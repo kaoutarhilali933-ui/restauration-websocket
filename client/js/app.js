@@ -15,7 +15,6 @@ socket.onmessage = (event) => {
   const data = JSON.parse(event.data);
   log(JSON.stringify(data));
 
-  // REGISTER SUCCESS
   if (data.type === "REGISTER_SUCCESS") {
     showAuthMessage("Registration successful 🎉", true);
   }
@@ -24,7 +23,6 @@ socket.onmessage = (event) => {
     showAuthMessage("Registration failed ❌ (" + data.reason + ")", false);
   }
 
-  // LOGIN SUCCESS
   if (data.type === "LOGIN_SUCCESS") {
     currentUserId = data.userId;
     currentUserRole = data.role;
@@ -37,7 +35,6 @@ socket.onmessage = (event) => {
     showAuthMessage("Login failed ❌ (" + data.reason + ")", false);
   }
 
-  // BOOKING
   if (data.type === "BOOKING_SUCCESS") {
     showBookingMessage("Reservation successful 🎉", true);
   }
@@ -46,10 +43,8 @@ socket.onmessage = (event) => {
     showBookingMessage("Reservation failed ❌ (" + data.reason + ")", false);
   }
 
-  // ADMIN
   if (data.type === "RESERVATIONS_LIST") {
-    document.getElementById("adminOutput").textContent =
-      JSON.stringify(data.data, null, 2);
+    renderReservations(data.data);
   }
 
   if (data.type === "UNAUTHORIZED") {
@@ -62,7 +57,7 @@ function log(message) {
 }
 
 /* =========================
-   AUTH FUNCTIONS
+   AUTH
 ========================= */
 
 function register() {
@@ -134,5 +129,35 @@ function showBookingMessage(message, success) {
 function getReservations() {
   socket.send(JSON.stringify({
     type: "GET_RESERVATIONS"
+  }));
+}
+
+function renderReservations(reservations) {
+  const tbody = document.querySelector("#adminTable tbody");
+  tbody.innerHTML = "";
+
+  reservations.forEach(res => {
+    const row = document.createElement("tr");
+
+    row.innerHTML = `
+      <td>${res.id}</td>
+      <td>${res.email}</td>
+      <td>${res.table_number}</td>
+      <td>${res.date}</td>
+      <td>${res.time}</td>
+      <td>${res.guests}</td>
+      <td>
+        <button onclick="deleteReservation(${res.id})">Delete</button>
+      </td>
+    `;
+
+    tbody.appendChild(row);
+  });
+}
+
+function deleteReservation(id) {
+  socket.send(JSON.stringify({
+    type: "DELETE_RESERVATION",
+    reservationId: id
   }));
 }
