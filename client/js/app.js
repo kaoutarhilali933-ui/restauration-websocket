@@ -9,8 +9,25 @@ socket.onmessage = (event) => {
   const data = JSON.parse(event.data);
   log(JSON.stringify(data));
 
+  // LOGIN SUCCESS
   if (data.type === "LOGIN_SUCCESS") {
     currentUserId = data.userId;
+  }
+
+  // BOOKING SUCCESS
+  if (data.type === "BOOKING_SUCCESS") {
+    showBookingMessage("Reservation successful 🎉", true);
+    markTableAsReserved(data.tableId);
+  }
+
+  // BOOKING FAILED
+  if (data.type === "BOOKING_FAILED") {
+    showBookingMessage("Reservation failed ❌ (" + data.reason + ")", false);
+  }
+
+  // UNAUTHORIZED
+  if (data.type === "UNAUTHORIZED") {
+    showBookingMessage("You must login first 🔒", false);
   }
 };
 
@@ -69,17 +86,50 @@ function loginAdmin() {
 ========================= */
 
 function bookTable() {
+
+  if (!currentUserId) {
+    showBookingMessage("You must login first 🔒", false);
+    return;
+  }
+
   const date = document.getElementById("date").value;
   const timeSlot = document.getElementById("timeSlot").value;
   const guests = parseInt(document.getElementById("guests").value);
 
   socket.send(JSON.stringify({
     type: "BOOK_TABLE",
-    tableId: 1,
     date: date,
     timeSlot: timeSlot,
-    guests: guests
+    numberOfGuests: guests
   }));
+}
+
+/* =========================
+   TABLE UI UPDATE
+========================= */
+
+function markTableAsReserved(tableId) {
+  const table = document.querySelector(`[data-table-id="${tableId}"]`);
+  if (!table) return;
+
+  table.classList.remove("available");
+  table.classList.add("reserved");
+
+  table.querySelector(".status-text").textContent = "Reserved";
+}
+
+function manualReserve(id) {
+  markTableAsReserved(id);
+}
+
+/* =========================
+   UI MESSAGE
+========================= */
+
+function showBookingMessage(message, success) {
+  const element = document.getElementById("bookingMessage");
+  element.textContent = message;
+  element.style.color = success ? "green" : "red";
 }
 
 function getReservations() {
@@ -87,43 +137,3 @@ function getReservations() {
     type: "GET_RESERVATIONS"
   }));
 }
-
-/* =========================
-   TABLES UI (Simulation)
-========================= */
-
-const tables = [
-  { id: 1, capacity: 4, reserved: false },
-  { id: 2, capacity: 2, reserved: true },
-  { id: 3, capacity: 6, reserved: false }
-];
-
-function renderTables() {
-  const container = document.getElementById("tablesContainer");
-  container.innerHTML = "";
-
-  tables.forEach(table => {
-    const card = document.createElement("div");
-    card.className = "table-card " + (table.reserved ? "reserved" : "available");
-
-    card.innerHTML = `
-      <h3>Table ${table.id}</h3>
-      <p>Capacity: ${table.capacity}</p>
-      <p>Status: ${table.reserved ? "Reserved" : "Available"}</p>
-      <button onclick="toggleTable(${table.id})">
-        ${table.reserved ? "Liberate" : "Reserve"}
-      </button>
-    `;
-
-    container.appendChild(card);
-  });
-}
-
-function toggleTable(id) {
-  const table = tables.find(t => t.id === id);
-  table.reserved = !table.reserved;
-  renderTables();
-}
-
-// Initial render
-renderTables();
