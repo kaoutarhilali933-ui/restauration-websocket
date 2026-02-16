@@ -1,42 +1,15 @@
-body {
-  font-family: Arial, sans-serif;
-  margin: 30px;
-}
-
-section {
-  margin-bottom: 30px;
-  padding: 15px;
-  border: 1px solid #ddd;
-  border-radius: 8px;
-}
-
-button {
-  margin: 5px;
-  padding: 8px 12px;
-  cursor: pointer;
-}
-
-.tables-container {
+.auth-container {
   display: flex;
-  gap: 20px;
+  gap: 40px;
 }
 
-.table-card {
+.auth-box {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+input, select {
+  padding: 6px;
   width: 200px;
-  padding: 15px;
-  border-radius: 10px;
-  text-align: center;
-  transition: 0.3s;
-}
-
-.available {
-  background-color: #c8e6c9;
-}
-
-.reserved {
-  background-color: #ffcdd2;
-}
-
-.table-card h3 {
-  margin-top: 0;
 }
