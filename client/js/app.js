@@ -18,11 +18,18 @@ socket.onerror = () => {
   log("WebSocket error");
 };
 
+socket.onclose = () => {
+  log("Disconnected from server");
+};
+
 function log(message) {
   document.getElementById("output").textContent += message + "\n";
 }
 
-// REGISTER
+/* =========================
+   AUTH
+========================= */
+
 function registerClient() {
   socket.send(JSON.stringify({
     type: "REGISTER",
@@ -41,7 +48,6 @@ function registerAdmin() {
   }));
 }
 
-// LOGIN
 function loginClient() {
   socket.send(JSON.stringify({
     type: "LOGIN",
@@ -58,18 +64,25 @@ function loginAdmin() {
   }));
 }
 
-// BOOK
+/* =========================
+   BOOKING
+========================= */
+
 function bookTable() {
+
+  const date = document.getElementById("date").value;
+  const timeSlot = document.getElementById("timeSlot").value;
+  const guests = parseInt(document.getElementById("guests").value);
+
   socket.send(JSON.stringify({
     type: "BOOK_TABLE",
-    tableId: 1,
-    date: "2025-06-10",
-    timeSlot: "19:00",
-    guests: 2
+    tableId: 1, // tu peux améliorer plus tard
+    date: date,
+    timeSlot: timeSlot,
+    guests: guests
   }));
 }
 
-// GET RESERVATIONS
 function getReservations() {
   socket.send(JSON.stringify({
     type: "GET_RESERVATIONS"
