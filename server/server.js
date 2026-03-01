@@ -1,4 +1,5 @@
 const WebSocket = require("ws");
+const sqlite3 = require("sqlite3").verbose();
 
 const {
   initDb,
@@ -9,8 +10,6 @@ const {
   saveReservation,
   getReservations
 } = require("./database");
-
-const sqlite3 = require("sqlite3").verbose();
 
 const Restaurant = require("./models/Restaurant");
 const Table = require("./models/Table");
@@ -45,21 +44,18 @@ function broadcast(message) {
 
 // ---------------- CONNECTION ----------------
 wss.on("connection", (socket) => {
-
   console.log("Client connected");
 
   let currentUser = null;
   clients.push(socket);
 
   socket.on("message", async (data) => {
-
     try {
       const message = JSON.parse(data);
       console.log("Message reçu :", message);
 
       // ================= REGISTER =================
       if (message.type === "REGISTER") {
-
         const existing = await getUserByEmail(message.email);
         if (existing) {
           socket.send(JSON.stringify({
@@ -79,11 +75,11 @@ wss.on("connection", (socket) => {
           type: "REGISTER_SUCCESS",
           userId: user.id
         }));
+        return;
       }
 
       // ================= LOGIN =================
       if (message.type === "LOGIN") {
-
         const user = await login(message.email, message.password);
 
         if (!user) {
@@ -101,11 +97,11 @@ wss.on("connection", (socket) => {
           userId: user.id,
           role: user.role
         }));
+        return;
       }
 
       // ================= BOOK TABLE (DATE AWARE) =================
       if (message.type === "BOOK_TABLE") {
-
         if (!currentUser) {
           socket.send(JSON.stringify({
             type: "UNAUTHORIZED",
@@ -134,7 +130,7 @@ wss.on("connection", (socket) => {
 
         const today = new Date();
         const bookingDate = new Date(date);
-        today.setHours(0,0,0,0);
+        today.setHours(0, 0, 0, 0);
 
         if (isNaN(bookingDate.getTime()) || bookingDate < today) {
           socket.send(JSON.stringify({
@@ -149,11 +145,9 @@ wss.on("connection", (socket) => {
         );
 
         const existingReservations = await getReservations();
-
         let selectedTable = null;
 
         for (let table of possibleTables) {
-
           const conflict = existingReservations.find(r =>
             r.table_id === table.id &&
             r.date === date &&
@@ -174,7 +168,8 @@ wss.on("connection", (socket) => {
           return;
         }
 
-        await saveReservation({
+        // ✅ IMPORTANT: saveReservation retourne { id: insertedId }
+        const newReservation = await saveReservation({
           user_id: currentUser.id,
           table_id: selectedTable.id,
           date,
@@ -182,19 +177,27 @@ wss.on("connection", (socket) => {
           guests: numberOfGuests
         });
 
-        broadcast({
+        // ✅ 1) BOOKING_SUCCESS uniquement au client qui a réservé
+        socket.send(JSON.stringify({
           type: "BOOKING_SUCCESS",
+          reservationId: newReservation.id,
           tableId: selectedTable.id
+        }));
+
+        // ✅ 2) Update neutre broadcast à tout le monde (y compris lui)
+        broadcast({
+          type: "TABLE_UPDATE",
+          tableId: selectedTable.id,
+          reserved: true
         });
+
+        return;
       }
 
       // ================= ADMIN GET RESERVATIONS =================
       if (message.type === "GET_RESERVATIONS") {
-
         if (!currentUser || currentUser.role !== "admin") {
-          socket.send(JSON.stringify({
-            type: "UNAUTHORIZED"
-          }));
+          socket.send(JSON.stringify({ type: "UNAUTHORIZED" }));
           return;
         }
 
@@ -204,47 +207,66 @@ wss.on("connection", (socket) => {
           type: "RESERVATIONS_LIST",
           data: reservations
         }));
+        return;
       }
 
       // ================= DELETE RESERVATION =================
       if (message.type === "DELETE_RESERVATION") {
-
         if (!currentUser || currentUser.role !== "admin") {
-          socket.send(JSON.stringify({
-            type: "UNAUTHORIZED"
-          }));
+          socket.send(JSON.stringify({ type: "UNAUTHORIZED" }));
           return;
         }
 
         const db = new sqlite3.Database("./database.sqlite");
 
-        db.get("SELECT * FROM reservations WHERE id = ?", [message.reservationId], (err, reservation) => {
+        db.get(
+          "SELECT * FROM reservations WHERE id = ?",
+          [message.reservationId],
+          (err, reservation) => {
+            if (err) {
+              console.log(err);
+              return;
+            }
+            if (!reservation) return;
 
-          if (!reservation) return;
+            db.run(
+              "DELETE FROM reservations WHERE id = ?",
+              [message.reservationId],
+              (err2) => {
+                if (err2) {
+                  console.log(err2);
+                  return;
+                }
 
-          db.run("DELETE FROM reservations WHERE id = ?", [message.reservationId]);
+                // ✅ broadcast deletion (tout le monde)
+                broadcast({
+                  type: "RESERVATION_DELETED",
+                  reservationId: message.reservationId,
+                  tableId: reservation.table_id
+                });
 
-          broadcast({
-            type: "RESERVATION_DELETED",
-            reservationId: message.reservationId,
-            tableId: reservation.table_id
-          });
+                // ✅ update table status for everyone
+                broadcast({
+                  type: "TABLE_UPDATE",
+                  tableId: reservation.table_id,
+                  reserved: false
+                });
+              }
+            );
+          }
+        );
 
-        });
+        return;
       }
 
     } catch (error) {
       console.log("Invalid JSON message", error);
     }
-
   });
 
   socket.on("close", () => {
     console.log("Client disconnected");
     const index = clients.indexOf(socket);
-    if (index !== -1) {
-      clients.splice(index, 1);
-    }
+    if (index !== -1) clients.splice(index, 1);
   });
-
 });
