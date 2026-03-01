@@ -1,42 +1,5 @@
-const sqlite3 = require("sqlite3").verbose();
-const path = require("path");
-
-const DB_PATH = path.join(__dirname, "database.sqlite");
-
-const db = new sqlite3.Database(DB_PATH, (err) => {
-  if (err) console.error("❌ SQLite error:", err.message);
-  else console.log("✅ SQLite connected");
-});
-
-// -------------------------
-// Helper Promises
-// -------------------------
-function run(sql, params = []) {
-  return new Promise((resolve, reject) => {
-    db.run(sql, params, function (err) {
-      if (err) reject(err);
-      else resolve(this); // ✅ this.lastID disponible ici
-    });
-  });
-}
-
-function get(sql, params = []) {
-  return new Promise((resolve, reject) => {
-    db.get(sql, params, (err, row) => {
-      if (err) reject(err);
-      else resolve(row);
-    });
-  });
-}
-
-function all(sql, params = []) {
-  return new Promise((resolve, reject) => {
-    db.all(sql, params, (err, rows) => {
-      if (err) reject(err);
-      else resolve(rows);
-    });
-  });
-}
+// server/database.js
+const { run, get, all } = require("./db/dbClient");
 
 // -------------------------
 // INIT DB
@@ -122,8 +85,6 @@ async function saveReservation({ user_id, table_id, date, time, guests }) {
      VALUES (?, ?, ?, ?, ?)`,
     [user_id, table_id, date, time, guests]
   );
-
-  // ✅ IMPORTANT : on retourne l'id, pour que le client sache si c'est sa réservation
   return { id: result.lastID };
 }
 
@@ -137,12 +98,31 @@ async function getReservations() {
   `);
 }
 
+async function getReservationById(id) {
+  return await get(
+    `SELECT r.*, u.email, t.number as table_number
+     FROM reservations r
+     JOIN users u ON u.id = r.user_id
+     JOIN tables t ON t.id = r.table_id
+     WHERE r.id = ?`,
+    [id]
+  );
+}
+
+async function deleteReservationById(id) {
+  await run(`DELETE FROM reservations WHERE id = ?`, [id]);
+}
+
 module.exports = {
   initDb,
   seedTables,
+
   createUser,
   getUserByEmail,
   login,
+
   saveReservation,
-  getReservations
+  getReservations,
+  getReservationById,
+  deleteReservationById
 };

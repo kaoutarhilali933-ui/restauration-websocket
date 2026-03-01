@@ -1,5 +1,5 @@
+// server/server.js
 const WebSocket = require("ws");
-const sqlite3 = require("sqlite3").verbose();
 
 const {
   initDb,
@@ -8,7 +8,9 @@ const {
   getUserByEmail,
   login,
   saveReservation,
-  getReservations
+  getReservations,
+  getReservationById,
+  deleteReservationById
 } = require("./database");
 
 const Restaurant = require("./models/Restaurant");
@@ -35,9 +37,10 @@ restaurant.addTable(new Table(3, 6));
 
 // ---------------- BROADCAST ----------------
 function broadcast(message) {
-  clients.forEach(client => {
+  const payload = JSON.stringify(message);
+  clients.forEach((client) => {
     if (client.readyState === WebSocket.OPEN) {
-      client.send(JSON.stringify(message));
+      client.send(payload);
     }
   });
 }
@@ -141,17 +144,18 @@ wss.on("connection", (socket) => {
         }
 
         const possibleTables = restaurant.tables.filter(
-          t => t.capacity >= numberOfGuests
+          (t) => t.capacity >= numberOfGuests
         );
 
         const existingReservations = await getReservations();
         let selectedTable = null;
 
         for (let table of possibleTables) {
-          const conflict = existingReservations.find(r =>
-            r.table_id === table.id &&
-            r.date === date &&
-            r.time === timeSlot
+          const conflict = existingReservations.find(
+            (r) =>
+              r.table_id === table.id &&
+              r.date === date &&
+              r.time === timeSlot
           );
 
           if (!conflict) {
@@ -168,7 +172,7 @@ wss.on("connection", (socket) => {
           return;
         }
 
-        // ✅ IMPORTANT: saveReservation retourne { id: insertedId }
+        // Save reservation -> returns { id }
         const newReservation = await saveReservation({
           user_id: currentUser.id,
           table_id: selectedTable.id,
@@ -177,14 +181,14 @@ wss.on("connection", (socket) => {
           guests: numberOfGuests
         });
 
-        // ✅ 1) BOOKING_SUCCESS uniquement au client qui a réservé
+        // ✅ Only the client who booked gets BOOKING_SUCCESS
         socket.send(JSON.stringify({
           type: "BOOKING_SUCCESS",
           reservationId: newReservation.id,
           tableId: selectedTable.id
         }));
 
-        // ✅ 2) Update neutre broadcast à tout le monde (y compris lui)
+        // ✅ Everyone gets TABLE_UPDATE
         broadcast({
           type: "TABLE_UPDATE",
           tableId: selectedTable.id,
@@ -210,51 +214,32 @@ wss.on("connection", (socket) => {
         return;
       }
 
-      // ================= DELETE RESERVATION =================
+      // ================= DELETE RESERVATION (REFACTORED) =================
       if (message.type === "DELETE_RESERVATION") {
         if (!currentUser || currentUser.role !== "admin") {
           socket.send(JSON.stringify({ type: "UNAUTHORIZED" }));
           return;
         }
 
-        const db = new sqlite3.Database("./database.sqlite");
+        const reservation = await getReservationById(message.reservationId);
+        if (!reservation) return;
 
-        db.get(
-          "SELECT * FROM reservations WHERE id = ?",
-          [message.reservationId],
-          (err, reservation) => {
-            if (err) {
-              console.log(err);
-              return;
-            }
-            if (!reservation) return;
+        await deleteReservationById(message.reservationId);
 
-            db.run(
-              "DELETE FROM reservations WHERE id = ?",
-              [message.reservationId],
-              (err2) => {
-                if (err2) {
-                  console.log(err2);
-                  return;
-                }
+        // ✅ Broadcast deletion for everyone
+        broadcast({
+          type: "RESERVATION_DELETED",
+          reservationId: message.reservationId,
+          tableId: reservation.table_id,
+          userId: reservation.user_id
+        });
 
-                // ✅ broadcast deletion (tout le monde)
-                broadcast({
-                  type: "RESERVATION_DELETED",
-                  reservationId: message.reservationId,
-                  tableId: reservation.table_id
-                });
-
-                // ✅ update table status for everyone
-                broadcast({
-                  type: "TABLE_UPDATE",
-                  tableId: reservation.table_id,
-                  reserved: false
-                });
-              }
-            );
-          }
-        );
+        // ✅ Update table status for everyone
+        broadcast({
+          type: "TABLE_UPDATE",
+          tableId: reservation.table_id,
+          reserved: false
+        });
 
         return;
       }
