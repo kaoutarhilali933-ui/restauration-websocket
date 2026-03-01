@@ -2,6 +2,13 @@ const socket = new WebSocket("ws://localhost:3000");
 
 let currentUserRole = null;
 
+// ✅ Pour savoir si la réservation supprimée est la tienne
+let myLastReservationId = null;
+
+// ✅ Timeout messages
+let bookingMsgTimeout;
+let authMsgTimeout;
+
 /* ================= TABLES ================= */
 
 const tables = [
@@ -41,10 +48,12 @@ socket.onmessage = (event) => {
   // REGISTER
   if (data.type === "REGISTER_SUCCESS") {
     showAuthMessage("Registration successful 🎉", true);
+    return;
   }
 
   if (data.type === "REGISTER_FAILED") {
     showAuthMessage("Registration failed ❌ (" + data.reason + ")", false);
+    return;
   }
 
   // LOGIN
@@ -52,43 +61,65 @@ socket.onmessage = (event) => {
     currentUserRole = data.role;
     showAuthMessage("Login successful ✅", true);
     showSectionsByRole();
+    return;
   }
 
   if (data.type === "LOGIN_FAILED") {
     showAuthMessage("Login failed ❌ (" + data.reason + ")", false);
+    return;
   }
 
-  // BOOKING SUCCESS
-  if (data.type === "BOOKING_SUCCESS") {
+  // ✅ Table update for everyone
+  if (data.type === "TABLE_UPDATE") {
     const table = tables.find(t => t.id === data.tableId);
-    if (table) table.reserved = true;
+    if (table) table.reserved = data.reserved;
 
     renderTables();
+    return;
+  }
+
+  // ✅ BOOKING SUCCESS (only the requester receives this)
+  if (data.type === "BOOKING_SUCCESS") {
+    myLastReservationId = data.reservationId;
     showBookingMessage("Reservation successful 🎉", true);
+    return;
   }
 
   // BOOKING FAILED
   if (data.type === "BOOKING_FAILED") {
     showBookingMessage("Reservation failed ❌ (" + data.reason + ")", false);
+    return;
   }
 
   // ADMIN LIST
   if (data.type === "RESERVATIONS_LIST") {
     renderReservations(data.data);
+    return;
   }
 
-  // DELETE SUCCESS
+  // ✅ DELETE EVENT (everyone receives)
   if (data.type === "RESERVATION_DELETED") {
-    const table = tables.find(t => t.id === data.tableId);
-    if (table) table.reserved = false;
+    // 1) message global
+    showBookingMessage(`A reservation was deleted ✅ (table ${data.tableId} freed)`, true);
 
-    renderTables();
-    getReservations();
+    // 2) message perso seulement si c'est la tienne
+    if (myLastReservationId && data.reservationId === myLastReservationId) {
+      showBookingMessage("Your reservation was cancelled ⚠️", false);
+      myLastReservationId = null; // reset
+    }
+
+    // 3) si admin, refresh la liste pour enlever la ligne sans refresh page
+    if (currentUserRole === "admin") {
+      getReservations();
+    }
+
+    return;
   }
 
   // UNAUTHORIZED
   if (data.type === "UNAUTHORIZED") {
     showBookingMessage("Unauthorized ❌", false);
+    return;
   }
 };
 
@@ -119,6 +150,11 @@ function showAuthMessage(message, success) {
   const el = document.getElementById("authMessage");
   el.textContent = message;
   el.style.color = success ? "green" : "red";
+
+  clearTimeout(authMsgTimeout);
+  authMsgTimeout = setTimeout(() => {
+    el.textContent = "";
+  }, 3000);
 }
 
 function showSectionsByRole() {
@@ -148,6 +184,11 @@ function showBookingMessage(message, success) {
   const el = document.getElementById("bookingMessage");
   el.textContent = message;
   el.style.color = success ? "green" : "red";
+
+  clearTimeout(bookingMsgTimeout);
+  bookingMsgTimeout = setTimeout(() => {
+    el.textContent = "";
+  }, 3500);
 }
 
 /* ================= ADMIN ================= */
