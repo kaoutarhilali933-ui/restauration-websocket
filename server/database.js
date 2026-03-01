@@ -15,7 +15,7 @@ function run(sql, params = []) {
   return new Promise((resolve, reject) => {
     db.run(sql, params, function (err) {
       if (err) reject(err);
-      else resolve(this);
+      else resolve(this); // ✅ this.lastID disponible ici
     });
   });
 }
@@ -81,7 +81,7 @@ async function initDb() {
 }
 
 // -------------------------
-// SEED TABLES (IMPORTANT)
+// SEED TABLES
 // -------------------------
 async function seedTables() {
   await run(`INSERT OR IGNORE INTO tables (id, number, seats) VALUES (1, 1, 4)`);
@@ -92,7 +92,7 @@ async function seedTables() {
 }
 
 // -------------------------
-// FUNCTIONS
+// USERS
 // -------------------------
 async function createUser({ email, password, role = "client" }) {
   const result = await run(
@@ -113,12 +113,17 @@ async function login(email, password) {
   );
 }
 
+// -------------------------
+// RESERVATIONS
+// -------------------------
 async function saveReservation({ user_id, table_id, date, time, guests }) {
   const result = await run(
     `INSERT INTO reservations (user_id, table_id, date, time, guests)
      VALUES (?, ?, ?, ?, ?)`,
     [user_id, table_id, date, time, guests]
   );
+
+  // ✅ IMPORTANT : on retourne l'id, pour que le client sache si c'est sa réservation
   return { id: result.lastID };
 }
 
