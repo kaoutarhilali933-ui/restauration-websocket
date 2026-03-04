@@ -59,8 +59,6 @@ async function seedTables() {
 // USERS
 // -------------------------
 async function createUser({ email, password, role = "client" }) {
-
-  // 🔐 Hash password
   const hashedPassword = await bcrypt.hash(password, 10);
 
   const result = await run(
@@ -76,17 +74,10 @@ async function getUserByEmail(email) {
 }
 
 async function login(email, password) {
-
-  const user = await get(
-    `SELECT * FROM users WHERE email = ?`,
-    [email]
-  );
-
+  const user = await get(`SELECT * FROM users WHERE email = ?`, [email]);
   if (!user) return null;
 
-  // 🔐 Compare password
   const match = await bcrypt.compare(password, user.password);
-
   if (!match) return null;
 
   return user;
@@ -96,7 +87,6 @@ async function login(email, password) {
 // RESERVATIONS
 // -------------------------
 async function saveReservation({ user_id, table_id, date, time, guests }) {
-
   const result = await run(
     `INSERT INTO reservations (user_id, table_id, date, time, guests)
      VALUES (?, ?, ?, ?, ?)`,
@@ -118,17 +108,48 @@ async function getReservations() {
 
 async function getReservationById(id) {
   return await get(
-    `SELECT r.*, u.email, t.number as table_number
-     FROM reservations r
-     JOIN users u ON u.id = r.user_id
-     JOIN tables t ON t.id = r.table_id
-     WHERE r.id = ?`,
+    `
+    SELECT r.*, u.email, t.number as table_number
+    FROM reservations r
+    JOIN users u ON u.id = r.user_id
+    JOIN tables t ON t.id = r.table_id
+    WHERE r.id = ?
+    `,
     [id]
   );
 }
 
 async function deleteReservationById(id) {
   await run(`DELETE FROM reservations WHERE id = ?`, [id]);
+}
+
+// ✅ NEW (IMPORTANT): get reservations for connected client by user_id
+async function getReservationsByUserId(userId) {
+  return await all(
+    `
+    SELECT r.id, r.date, r.time, r.guests, r.status, t.number AS table_number
+    FROM reservations r
+    JOIN tables t ON t.id = r.table_id
+    WHERE r.user_id = ?
+    ORDER BY r.created_at DESC
+    `,
+    [userId]
+  );
+}
+
+// (optionnel) si tu veux aussi par email
+async function getReservationsByUserEmail(email) {
+  return await all(
+    `
+    SELECT r.id, r.date, r.time, r.guests, r.status, t.number AS table_number
+    FROM reservations r
+    JOIN tables t ON r.table_id = t.id
+    JOIN users u ON r.user_id = u.id
+    WHERE u.email = ?
+    ORDER BY r.created_at DESC
+    `,
+    [email]
+  );
 }
 
 // -------------------------
@@ -145,5 +166,8 @@ module.exports = {
   saveReservation,
   getReservations,
   getReservationById,
-  deleteReservationById
+  deleteReservationById,
+
+  getReservationsByUserId,     // ✅ REQUIRED for MY_RESERVATIONS
+  getReservationsByUserEmail,  // ✅ optional
 };
