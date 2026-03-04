@@ -10,7 +10,8 @@ const {
   saveReservation,
   getReservations,
   getReservationById,
-  deleteReservationById
+  deleteReservationById,
+  getReservationsByUserId, // ✅ NOW EXISTS
 } = require("./database");
 
 const Restaurant = require("./models/Restaurant");
@@ -20,14 +21,19 @@ const PORT = 3000;
 
 // ---------------- INIT DB ----------------
 (async () => {
-  await initDb();
-  await seedTables();
+  try {
+    await initDb();
+    await seedTables();
+  } catch (err) {
+    console.error("❌ DB init error:", err);
+  }
 })();
 
+// ---------------- WEBSOCKET SERVER ----------------
 const wss = new WebSocket.Server({ port: PORT });
 const clients = [];
 
-console.log("WebSocket server running on ws://localhost:" + PORT);
+console.log("✅ WebSocket server running on ws://localhost:" + PORT);
 
 // ---------------- RESTAURANT ----------------
 const restaurant = new Restaurant();
@@ -48,86 +54,84 @@ function broadcast(message) {
 // ---------------- CONNECTION ----------------
 wss.on("connection", (socket) => {
   console.log("Client connected");
-
-  let currentUser = null;
   clients.push(socket);
 
+  let currentUser = null;
+
   socket.on("message", async (data) => {
+    // ✅ 1) PARSE JSON only
+    let message;
     try {
-      const message = JSON.parse(data);
+      message = JSON.parse(data.toString());
+    } catch (err) {
+      console.error("❌ JSON PARSE ERROR:", err);
+      socket.send(JSON.stringify({ type: "INVALID_JSON", error: "Message must be valid JSON" }));
+      return;
+    }
+
+    // ✅ 2) Handle logic
+    try {
       console.log("Message reçu :", message);
 
       // ================= REGISTER =================
       if (message.type === "REGISTER") {
-        const existing = await getUserByEmail(message.email);
-        if (existing) {
-          socket.send(JSON.stringify({
-            type: "REGISTER_FAILED",
-            reason: "Email already exists"
-          }));
+        const { email, password, role } = message;
+
+        if (!email || !password) {
+          socket.send(JSON.stringify({ type: "REGISTER_FAILED", reason: "EMAIL_AND_PASSWORD_REQUIRED" }));
           return;
         }
 
-        const user = await createUser({
-          email: message.email,
-          password: message.password,
-          role: message.role || "client"
-        });
+        const existing = await getUserByEmail(email);
+        if (existing) {
+          socket.send(JSON.stringify({ type: "REGISTER_FAILED", reason: "Email already exists" }));
+          return;
+        }
 
-        socket.send(JSON.stringify({
-          type: "REGISTER_SUCCESS",
-          userId: user.id
-        }));
+        const user = await createUser({ email, password, role: role || "client" });
+
+        socket.send(JSON.stringify({ type: "REGISTER_SUCCESS", userId: user.id }));
         return;
       }
 
       // ================= LOGIN =================
       if (message.type === "LOGIN") {
-        const user = await login(message.email, message.password);
+        const { email, password } = message;
+
+        if (!email || !password) {
+          socket.send(JSON.stringify({ type: "LOGIN_FAILED", reason: "EMAIL_AND_PASSWORD_REQUIRED" }));
+          return;
+        }
+
+        const user = await login(email, password);
 
         if (!user) {
-          socket.send(JSON.stringify({
-            type: "LOGIN_FAILED",
-            reason: "Invalid email or password"
-          }));
+          socket.send(JSON.stringify({ type: "LOGIN_FAILED", reason: "Invalid email or password" }));
           return;
         }
 
         currentUser = user;
 
-        socket.send(JSON.stringify({
-          type: "LOGIN_SUCCESS",
-          userId: user.id,
-          role: user.role
-        }));
+        socket.send(JSON.stringify({ type: "LOGIN_SUCCESS", userId: user.id, role: user.role }));
         return;
       }
 
-      // ================= BOOK TABLE (DATE AWARE) =================
+      // ================= BOOK TABLE =================
       if (message.type === "BOOK_TABLE") {
         if (!currentUser) {
-          socket.send(JSON.stringify({
-            type: "UNAUTHORIZED",
-            reason: "You must login first"
-          }));
+          socket.send(JSON.stringify({ type: "UNAUTHORIZED", reason: "You must login first" }));
           return;
         }
 
         const { date, timeSlot, numberOfGuests } = message;
 
         if (!date || !timeSlot || !numberOfGuests) {
-          socket.send(JSON.stringify({
-            type: "BOOKING_FAILED",
-            reason: "INVALID_DATA"
-          }));
+          socket.send(JSON.stringify({ type: "BOOKING_FAILED", reason: "INVALID_DATA" }));
           return;
         }
 
         if (!restaurant.allowedTimeSlots.includes(timeSlot)) {
-          socket.send(JSON.stringify({
-            type: "BOOKING_FAILED",
-            reason: "INVALID_TIME_SLOT"
-          }));
+          socket.send(JSON.stringify({ type: "BOOKING_FAILED", reason: "INVALID_TIME_SLOT" }));
           return;
         }
 
@@ -136,28 +140,21 @@ wss.on("connection", (socket) => {
         today.setHours(0, 0, 0, 0);
 
         if (isNaN(bookingDate.getTime()) || bookingDate < today) {
-          socket.send(JSON.stringify({
-            type: "BOOKING_FAILED",
-            reason: "INVALID_DATE"
-          }));
+          socket.send(JSON.stringify({ type: "BOOKING_FAILED", reason: "INVALID_DATE" }));
           return;
         }
 
         const possibleTables = restaurant.tables.filter(
-          (t) => t.capacity >= numberOfGuests
+          (t) => t.capacity >= Number(numberOfGuests)
         );
 
         const existingReservations = await getReservations();
         let selectedTable = null;
 
-        for (let table of possibleTables) {
+        for (const table of possibleTables) {
           const conflict = existingReservations.find(
-            (r) =>
-              r.table_id === table.id &&
-              r.date === date &&
-              r.time === timeSlot
+            (r) => r.table_id === table.id && r.date === date && r.time === timeSlot
           );
-
           if (!conflict) {
             selectedTable = table;
             break;
@@ -165,36 +162,41 @@ wss.on("connection", (socket) => {
         }
 
         if (!selectedTable) {
-          socket.send(JSON.stringify({
-            type: "BOOKING_FAILED",
-            reason: "NO_TABLE_AVAILABLE"
-          }));
+          socket.send(JSON.stringify({ type: "BOOKING_FAILED", reason: "NO_TABLE_AVAILABLE" }));
           return;
         }
 
-        // Save reservation -> returns { id }
         const newReservation = await saveReservation({
           user_id: currentUser.id,
           table_id: selectedTable.id,
           date,
           time: timeSlot,
-          guests: numberOfGuests
+          guests: Number(numberOfGuests),
         });
 
-        // ✅ Only the client who booked gets BOOKING_SUCCESS
         socket.send(JSON.stringify({
           type: "BOOKING_SUCCESS",
           reservationId: newReservation.id,
-          tableId: selectedTable.id
+          tableId: selectedTable.id,
         }));
 
-        // ✅ Everyone gets TABLE_UPDATE
-        broadcast({
-          type: "TABLE_UPDATE",
-          tableId: selectedTable.id,
-          reserved: true
-        });
+        broadcast({ type: "TABLE_UPDATE", tableId: selectedTable.id, reserved: true });
+        return;
+      }
 
+      // ================= ✅ MY RESERVATIONS (CLIENT) =================
+      if (message.type === "MY_RESERVATIONS") {
+        if (!currentUser) {
+          socket.send(JSON.stringify({ type: "UNAUTHORIZED" }));
+          return;
+        }
+
+        const reservations = await getReservationsByUserId(currentUser.id);
+
+        socket.send(JSON.stringify({
+          type: "MY_RESERVATIONS_LIST",
+          data: reservations,
+        }));
         return;
       }
 
@@ -206,46 +208,46 @@ wss.on("connection", (socket) => {
         }
 
         const reservations = await getReservations();
-
-        socket.send(JSON.stringify({
-          type: "RESERVATIONS_LIST",
-          data: reservations
-        }));
+        socket.send(JSON.stringify({ type: "RESERVATIONS_LIST", data: reservations }));
         return;
       }
 
-      // ================= DELETE RESERVATION (REFACTORED) =================
+      // ================= DELETE RESERVATION (ADMIN) =================
       if (message.type === "DELETE_RESERVATION") {
         if (!currentUser || currentUser.role !== "admin") {
           socket.send(JSON.stringify({ type: "UNAUTHORIZED" }));
           return;
         }
 
-        const reservation = await getReservationById(message.reservationId);
-        if (!reservation) return;
+        const reservationId = message.reservationId;
+        if (!reservationId) {
+          socket.send(JSON.stringify({ type: "DELETE_FAILED", reason: "RESERVATION_ID_REQUIRED" }));
+          return;
+        }
 
-        await deleteReservationById(message.reservationId);
+        const reservation = await getReservationById(reservationId);
+        if (!reservation) {
+          socket.send(JSON.stringify({ type: "DELETE_FAILED", reason: "NOT_FOUND" }));
+          return;
+        }
 
-        // ✅ Broadcast deletion for everyone
+        await deleteReservationById(reservationId);
+
         broadcast({
           type: "RESERVATION_DELETED",
-          reservationId: message.reservationId,
+          reservationId,
           tableId: reservation.table_id,
-          userId: reservation.user_id
+          userId: reservation.user_id,
         });
 
-        // ✅ Update table status for everyone
-        broadcast({
-          type: "TABLE_UPDATE",
-          tableId: reservation.table_id,
-          reserved: false
-        });
-
+        broadcast({ type: "TABLE_UPDATE", tableId: reservation.table_id, reserved: false });
         return;
       }
 
-    } catch (error) {
-      console.log("Invalid JSON message", error);
+      socket.send(JSON.stringify({ type: "UNKNOWN_MESSAGE_TYPE", receivedType: message.type }));
+    } catch (err) {
+      console.error("❌ SERVER ERROR:", err);
+      socket.send(JSON.stringify({ type: "SERVER_ERROR", error: "Internal server error" }));
     }
   });
 

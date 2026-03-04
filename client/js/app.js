@@ -8,6 +8,7 @@ let myLastReservationId = null;
 // ✅ Timeout messages
 let bookingMsgTimeout;
 let authMsgTimeout;
+let myResMsgTimeout;
 
 /* ================= TABLES ================= */
 
@@ -61,6 +62,13 @@ socket.onmessage = (event) => {
     currentUserRole = data.role;
     showAuthMessage("Login successful ✅", true);
     showSectionsByRole();
+
+    // ✅ Auto-load my reservations for clients
+    if (currentUserRole === "client") {
+      document.getElementById("myReservationsSection").style.display = "block";
+      loadMyReservations();
+    }
+
     return;
   }
 
@@ -82,6 +90,12 @@ socket.onmessage = (event) => {
   if (data.type === "BOOKING_SUCCESS") {
     myLastReservationId = data.reservationId;
     showBookingMessage("Reservation successful 🎉", true);
+
+    // ✅ Refresh my reservations after booking
+    if (currentUserRole === "client") {
+      loadMyReservations();
+    }
+
     return;
   }
 
@@ -97,6 +111,14 @@ socket.onmessage = (event) => {
     return;
   }
 
+  // ✅ MY RESERVATIONS LIST (client)
+  if (data.type === "MY_RESERVATIONS_LIST") {
+    document.getElementById("myReservationsSection").style.display = "block";
+    renderMyReservations(data.data);
+    showMyReservationsMessage("My reservations updated ✅", true);
+    return;
+  }
+
   // ✅ DELETE EVENT (everyone receives)
   if (data.type === "RESERVATION_DELETED") {
     // 1) message global
@@ -106,9 +128,11 @@ socket.onmessage = (event) => {
     if (myLastReservationId && data.reservationId === myLastReservationId) {
       showBookingMessage("Your reservation was cancelled ⚠️", false);
       myLastReservationId = null; // reset
+      // ✅ refresh list
+      if (currentUserRole === "client") loadMyReservations();
     }
 
-    // 3) si admin, refresh la liste pour enlever la ligne sans refresh page
+    // 3) si admin, refresh la liste
     if (currentUserRole === "admin") {
       getReservations();
     }
@@ -166,6 +190,10 @@ function showSectionsByRole() {
 
   if (currentUserRole === "admin") {
     document.getElementById("adminSection").style.display = "block";
+  }
+
+  if (currentUserRole === "client") {
+    document.getElementById("myReservationsSection").style.display = "block";
   }
 }
 
@@ -229,4 +257,51 @@ function deleteReservation(id) {
     type: "DELETE_RESERVATION",
     reservationId: id
   }));
+}
+
+/* ================= MY RESERVATIONS (CLIENT) ================= */
+
+function loadMyReservations() {
+  // ✅ Debug : on affiche ce qu’on envoie
+  log("➡️ Sending MY_RESERVATIONS");
+  socket.send(JSON.stringify({ type: "MY_RESERVATIONS" }));
+}
+
+// ✅ Important : rendre la fonction accessible au onclick HTML
+window.loadMyReservations = loadMyReservations;
+
+function renderMyReservations(reservations) {
+  const tbody = document.querySelector("#myReservationsTable tbody");
+  tbody.innerHTML = "";
+
+  if (!reservations || reservations.length === 0) {
+    tbody.innerHTML = `<tr><td colspan="6" style="text-align:center;">No reservations</td></tr>`;
+    return;
+  }
+
+  reservations.forEach(r => {
+    const row = document.createElement("tr");
+    row.innerHTML = `
+      <td>${r.id}</td>
+      <td>${r.date}</td>
+      <td>${r.time}</td>
+      <td>${r.guests}</td>
+      <td>${r.status}</td>
+      <td>${r.table_number ?? ""}</td>
+    `;
+    tbody.appendChild(row);
+  });
+}
+
+function showMyReservationsMessage(message, success) {
+  const el = document.getElementById("myReservationsMessage");
+  if (!el) return;
+
+  el.textContent = message;
+  el.style.color = success ? "green" : "red";
+
+  clearTimeout(myResMsgTimeout);
+  myResMsgTimeout = setTimeout(() => {
+    el.textContent = "";
+  }, 2500);
 }
