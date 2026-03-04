@@ -1,5 +1,6 @@
 // server/database.js
 const { run, get, all } = require("./db/dbClient");
+const bcrypt = require("bcrypt");
 
 // -------------------------
 // INIT DB
@@ -58,10 +59,15 @@ async function seedTables() {
 // USERS
 // -------------------------
 async function createUser({ email, password, role = "client" }) {
+
+  // 🔐 Hash password
+  const hashedPassword = await bcrypt.hash(password, 10);
+
   const result = await run(
     `INSERT INTO users (email, password, role) VALUES (?, ?, ?)`,
-    [email, password, role]
+    [email, hashedPassword, role]
   );
+
   return { id: result.lastID };
 }
 
@@ -70,21 +76,33 @@ async function getUserByEmail(email) {
 }
 
 async function login(email, password) {
-  return await get(
-    `SELECT * FROM users WHERE email = ? AND password = ?`,
-    [email, password]
+
+  const user = await get(
+    `SELECT * FROM users WHERE email = ?`,
+    [email]
   );
+
+  if (!user) return null;
+
+  // 🔐 Compare password
+  const match = await bcrypt.compare(password, user.password);
+
+  if (!match) return null;
+
+  return user;
 }
 
 // -------------------------
 // RESERVATIONS
 // -------------------------
 async function saveReservation({ user_id, table_id, date, time, guests }) {
+
   const result = await run(
     `INSERT INTO reservations (user_id, table_id, date, time, guests)
      VALUES (?, ?, ?, ?, ?)`,
     [user_id, table_id, date, time, guests]
   );
+
   return { id: result.lastID };
 }
 
@@ -113,6 +131,9 @@ async function deleteReservationById(id) {
   await run(`DELETE FROM reservations WHERE id = ?`, [id]);
 }
 
+// -------------------------
+// EXPORTS
+// -------------------------
 module.exports = {
   initDb,
   seedTables,
