@@ -140,6 +140,10 @@ button:hover {
   background: #27ae60;
 }
 
+.table.pending {
+  background: #f39c12;
+}
+
 .table.reserved {
   background: #e74c3c;
 }
@@ -283,7 +287,6 @@ tbody tr:hover {
 /* ===== RESPONSIVE ===== */
 
 @media (max-width: 900px) {
-
   .auth-container {
     flex-direction: column;
   }
@@ -303,5 +306,4 @@ tbody tr:hover {
   .stats-grid {
     grid-template-columns: 1fr;
   }
-
 }

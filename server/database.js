@@ -95,7 +95,7 @@ async function login(email, password) {
 async function saveReservation({ user_id, table_id, date, time, guests }) {
   const result = await run(
     `INSERT INTO reservations (user_id, table_id, date, time, guests, status)
-     VALUES (?, ?, ?, ?, ?, 'confirmed')`,
+     VALUES (?, ?, ?, ?, ?, 'pending')`,
     [user_id, table_id, date, time, guests]
   );
 
@@ -145,6 +145,27 @@ async function hasUserBookingForSlot(userId, date, time) {
   );
 
   return !!existing;
+}
+
+// ✅ confirm reservation (admin only)
+async function confirmReservationById(reservationId) {
+  const reservation = await get(
+    `SELECT id, table_id, user_id, status FROM reservations WHERE id = ?`,
+    [reservationId]
+  );
+
+  if (!reservation) return null;
+
+  await run(
+    `UPDATE reservations SET status = 'confirmed' WHERE id = ?`,
+    [reservationId]
+  );
+
+  return {
+    id: reservation.id,
+    table_id: reservation.table_id,
+    user_id: reservation.user_id
+  };
 }
 
 // ✅ cancel reservation (client can cancel ONLY his own reservation)
@@ -208,6 +229,7 @@ module.exports = {
   getReservationById,
   deleteReservationById,
   hasUserBookingForSlot,
+  confirmReservationById,
 
   cancelReservationById,
 
