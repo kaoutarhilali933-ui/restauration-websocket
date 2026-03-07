@@ -48,9 +48,15 @@ async function initDb() {
 // SEED TABLES
 // -------------------------
 async function seedTables() {
-  await run(`INSERT OR IGNORE INTO tables (id, number, seats) VALUES (1, 1, 4)`);
-  await run(`INSERT OR IGNORE INTO tables (id, number, seats) VALUES (2, 2, 2)`);
-  await run(`INSERT OR IGNORE INTO tables (id, number, seats) VALUES (3, 3, 6)`);
+  await run(
+    `INSERT OR IGNORE INTO tables (id, number, seats) VALUES (1, 1, 4)`
+  );
+  await run(
+    `INSERT OR IGNORE INTO tables (id, number, seats) VALUES (2, 2, 2)`
+  );
+  await run(
+    `INSERT OR IGNORE INTO tables (id, number, seats) VALUES (3, 3, 6)`
+  );
 
   console.log("✅ Default tables inserted");
 }
@@ -92,6 +98,7 @@ async function saveReservation({ user_id, table_id, date, time, guests }) {
      VALUES (?, ?, ?, ?, ?, 'confirmed')`,
     [user_id, table_id, date, time, guests]
   );
+
   return { id: result.lastID };
 }
 
@@ -122,20 +129,37 @@ async function deleteReservationById(id) {
   await run(`DELETE FROM reservations WHERE id = ?`, [id]);
 }
 
-// ✅ NEW: cancel reservation (client can cancel ONLY his own reservation)
+// ✅ same user cannot reserve same date + same slot twice
+async function hasUserBookingForSlot(userId, date, time) {
+  const existing = await get(
+    `
+    SELECT id
+    FROM reservations
+    WHERE user_id = ?
+      AND date = ?
+      AND time = ?
+      AND status != 'cancelled'
+    LIMIT 1
+    `,
+    [userId, date, time]
+  );
+
+  return !!existing;
+}
+
+// ✅ cancel reservation (client can cancel ONLY his own reservation)
 async function cancelReservationById(reservationId, userId) {
   const res = await get(
     `SELECT id, table_id, user_id, status FROM reservations WHERE id = ? AND user_id = ?`,
     [reservationId, userId]
   );
 
-  if (!res) return null; // not found or not owned by user
+  if (!res) return null;
 
   await run(`UPDATE reservations SET status = 'cancelled' WHERE id = ?`, [
     reservationId,
   ]);
 
-  // return info useful for broadcast / UI
   return { id: reservationId, table_id: res.table_id, user_id: res.user_id };
 }
 
@@ -183,9 +207,10 @@ module.exports = {
   getReservations,
   getReservationById,
   deleteReservationById,
+  hasUserBookingForSlot,
 
-  cancelReservationById, // ✅ NEW
+  cancelReservationById,
 
-  getReservationsByUserId, // ✅ REQUIRED for MY_RESERVATIONS
-  getReservationsByUserEmail, // ✅ optional
+  getReservationsByUserId,
+  getReservationsByUserEmail,
 };
