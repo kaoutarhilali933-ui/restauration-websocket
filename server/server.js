@@ -11,7 +11,8 @@ const {
   getReservations,
   getReservationById,
   deleteReservationById,
-  cancelReservationById, // ✅ NEW
+  hasUserBookingForSlot,
+  cancelReservationById,
   getReservationsByUserId,
 } = require("./database");
 
@@ -60,8 +61,8 @@ wss.on("connection", (socket) => {
   let currentUser = null;
 
   socket.on("message", async (data) => {
-    // ✅ 1) PARSE JSON only
     let message;
+
     try {
       message = JSON.parse(data.toString());
     } catch (err) {
@@ -75,7 +76,6 @@ wss.on("connection", (socket) => {
       return;
     }
 
-    // ✅ 2) Handle logic
     try {
       console.log("Message reçu :", message);
 
@@ -110,7 +110,12 @@ wss.on("connection", (socket) => {
           role: role || "client",
         });
 
-        socket.send(JSON.stringify({ type: "REGISTER_SUCCESS", userId: user.id }));
+        socket.send(
+          JSON.stringify({
+            type: "REGISTER_SUCCESS",
+            userId: user.id,
+          })
+        );
         return;
       }
 
@@ -168,12 +173,22 @@ wss.on("connection", (socket) => {
         const guests = Number(numberOfGuests);
 
         if (!date || !timeSlot || Number.isNaN(guests) || guests <= 0) {
-          socket.send(JSON.stringify({ type: "BOOKING_FAILED", reason: "INVALID_DATA" }));
+          socket.send(
+            JSON.stringify({
+              type: "BOOKING_FAILED",
+              reason: "INVALID_DATA",
+            })
+          );
           return;
         }
 
         if (!restaurant.allowedTimeSlots.includes(timeSlot)) {
-          socket.send(JSON.stringify({ type: "BOOKING_FAILED", reason: "INVALID_TIME_SLOT" }));
+          socket.send(
+            JSON.stringify({
+              type: "BOOKING_FAILED",
+              reason: "INVALID_TIME_SLOT",
+            })
+          );
           return;
         }
 
@@ -182,19 +197,49 @@ wss.on("connection", (socket) => {
         today.setHours(0, 0, 0, 0);
 
         if (isNaN(bookingDate.getTime()) || bookingDate < today) {
-          socket.send(JSON.stringify({ type: "BOOKING_FAILED", reason: "INVALID_DATE" }));
+          socket.send(
+            JSON.stringify({
+              type: "BOOKING_FAILED",
+              reason: "INVALID_DATE",
+            })
+          );
           return;
         }
 
-        const possibleTables = restaurant.tables.filter((t) => t.capacity >= guests);
+        // ✅ same user cannot reserve same date + same slot twice
+        const alreadyBooked = await hasUserBookingForSlot(
+          currentUser.id,
+          date,
+          timeSlot
+        );
+
+        if (alreadyBooked) {
+          socket.send(
+            JSON.stringify({
+              type: "BOOKING_FAILED",
+              reason: "USER_ALREADY_BOOKED_THIS_SLOT",
+            })
+          );
+          return;
+        }
+
+        // ✅ tables filtered by capacity
+        const possibleTables = restaurant.tables.filter(
+          (t) => t.capacity >= guests
+        );
 
         const existingReservations = await getReservations();
         let selectedTable = null;
 
+        // ✅ GLOBAL table locking logic:
+        // if a table was already reserved and not cancelled, it is unavailable for everyone
         for (const table of possibleTables) {
           const conflict = existingReservations.find(
-            (r) => r.table_id === table.id && r.date === date && r.time === timeSlot
+            (r) =>
+              r.table_id === table.id &&
+              r.status !== "cancelled"
           );
+
           if (!conflict) {
             selectedTable = table;
             break;
@@ -202,7 +247,12 @@ wss.on("connection", (socket) => {
         }
 
         if (!selectedTable) {
-          socket.send(JSON.stringify({ type: "BOOKING_FAILED", reason: "NO_TABLE_AVAILABLE" }));
+          socket.send(
+            JSON.stringify({
+              type: "BOOKING_FAILED",
+              reason: "NO_TABLE_AVAILABLE",
+            })
+          );
           return;
         }
 
@@ -223,7 +273,13 @@ wss.on("connection", (socket) => {
           })
         );
 
-        broadcast({ type: "TABLE_UPDATE", tableId: selectedTable.id, reserved: true });
+        // ✅ make this table red for everyone
+        broadcast({
+          type: "TABLE_UPDATE",
+          tableId: selectedTable.id,
+          reserved: true,
+        });
+
         return;
       }
 
@@ -235,28 +291,51 @@ wss.on("connection", (socket) => {
         }
 
         const { reservationId } = message;
+
         if (!reservationId) {
-          socket.send(JSON.stringify({ type: "CANCEL_FAILED", reason: "RESERVATION_ID_REQUIRED" }));
+          socket.send(
+            JSON.stringify({
+              type: "CANCEL_FAILED",
+              reason: "RESERVATION_ID_REQUIRED",
+            })
+          );
           return;
         }
 
-        const cancelled = await cancelReservationById(Number(reservationId), currentUser.id);
+        const cancelled = await cancelReservationById(
+          Number(reservationId),
+          currentUser.id
+        );
 
         if (!cancelled) {
-          socket.send(JSON.stringify({ type: "CANCEL_FAILED", reason: "NOT_ALLOWED_OR_NOT_FOUND" }));
+          socket.send(
+            JSON.stringify({
+              type: "CANCEL_FAILED",
+              reason: "NOT_ALLOWED_OR_NOT_FOUND",
+            })
+          );
           return;
         }
 
-        // ✅ notify requester
-        socket.send(JSON.stringify({ type: "CANCEL_SUCCESS", reservationId: Number(reservationId) }));
+        socket.send(
+          JSON.stringify({
+            type: "CANCEL_SUCCESS",
+            reservationId: Number(reservationId),
+          })
+        );
 
-        // ✅ notify everyone (optional but pro)
-        broadcast({ type: "RESERVATION_CANCELLED", reservationId: Number(reservationId) });
+        broadcast({
+          type: "RESERVATION_CANCELLED",
+          reservationId: Number(reservationId),
+        });
 
-        // 🔥 IMPORTANT:
-        // On ne libère PAS automatiquement la table ici car ta logique de tables
-        // est "date + timeSlot". Le refresh se fera en rechargeant les réservations.
-        // (On pourra améliorer ça dans une prochaine feature.)
+        // ✅ free the table globally for everyone
+        broadcast({
+          type: "TABLE_UPDATE",
+          tableId: cancelled.table_id,
+          reserved: false,
+        });
+
         return;
       }
 
@@ -286,7 +365,13 @@ wss.on("connection", (socket) => {
         }
 
         const reservations = await getReservations();
-        socket.send(JSON.stringify({ type: "RESERVATIONS_LIST", data: reservations }));
+
+        socket.send(
+          JSON.stringify({
+            type: "RESERVATIONS_LIST",
+            data: reservations,
+          })
+        );
         return;
       }
 
@@ -298,14 +383,26 @@ wss.on("connection", (socket) => {
         }
 
         const reservationId = message.reservationId;
+
         if (!reservationId) {
-          socket.send(JSON.stringify({ type: "DELETE_FAILED", reason: "RESERVATION_ID_REQUIRED" }));
+          socket.send(
+            JSON.stringify({
+              type: "DELETE_FAILED",
+              reason: "RESERVATION_ID_REQUIRED",
+            })
+          );
           return;
         }
 
         const reservation = await getReservationById(reservationId);
+
         if (!reservation) {
-          socket.send(JSON.stringify({ type: "DELETE_FAILED", reason: "NOT_FOUND" }));
+          socket.send(
+            JSON.stringify({
+              type: "DELETE_FAILED",
+              reason: "NOT_FOUND",
+            })
+          );
           return;
         }
 
@@ -318,18 +415,30 @@ wss.on("connection", (socket) => {
           userId: reservation.user_id,
         });
 
+        // ✅ free the table globally for everyone
         broadcast({
           type: "TABLE_UPDATE",
           tableId: reservation.table_id,
           reserved: false,
         });
+
         return;
       }
 
-      socket.send(JSON.stringify({ type: "UNKNOWN_MESSAGE_TYPE", receivedType: message.type }));
+      socket.send(
+        JSON.stringify({
+          type: "UNKNOWN_MESSAGE_TYPE",
+          receivedType: message.type,
+        })
+      );
     } catch (err) {
       console.error("❌ SERVER ERROR:", err);
-      socket.send(JSON.stringify({ type: "SERVER_ERROR", error: "Internal server error" }));
+      socket.send(
+        JSON.stringify({
+          type: "SERVER_ERROR",
+          error: "Internal server error",
+        })
+      );
     }
   });
 
