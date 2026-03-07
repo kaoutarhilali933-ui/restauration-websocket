@@ -88,11 +88,10 @@ async function login(email, password) {
 // -------------------------
 async function saveReservation({ user_id, table_id, date, time, guests }) {
   const result = await run(
-    `INSERT INTO reservations (user_id, table_id, date, time, guests)
-     VALUES (?, ?, ?, ?, ?)`,
+    `INSERT INTO reservations (user_id, table_id, date, time, guests, status)
+     VALUES (?, ?, ?, ?, ?, 'confirmed')`,
     [user_id, table_id, date, time, guests]
   );
-
   return { id: result.lastID };
 }
 
@@ -123,7 +122,24 @@ async function deleteReservationById(id) {
   await run(`DELETE FROM reservations WHERE id = ?`, [id]);
 }
 
-// ✅ NEW (IMPORTANT): get reservations for connected client by user_id
+// ✅ NEW: cancel reservation (client can cancel ONLY his own reservation)
+async function cancelReservationById(reservationId, userId) {
+  const res = await get(
+    `SELECT id, table_id, user_id, status FROM reservations WHERE id = ? AND user_id = ?`,
+    [reservationId, userId]
+  );
+
+  if (!res) return null; // not found or not owned by user
+
+  await run(`UPDATE reservations SET status = 'cancelled' WHERE id = ?`, [
+    reservationId,
+  ]);
+
+  // return info useful for broadcast / UI
+  return { id: reservationId, table_id: res.table_id, user_id: res.user_id };
+}
+
+// ✅ get reservations for connected client by user_id
 async function getReservationsByUserId(userId) {
   return await all(
     `
@@ -137,7 +153,7 @@ async function getReservationsByUserId(userId) {
   );
 }
 
-// (optionnel) si tu veux aussi par email
+// optional: by email
 async function getReservationsByUserEmail(email) {
   return await all(
     `
@@ -168,6 +184,8 @@ module.exports = {
   getReservationById,
   deleteReservationById,
 
-  getReservationsByUserId,     // ✅ REQUIRED for MY_RESERVATIONS
-  getReservationsByUserEmail,  // ✅ optional
+  cancelReservationById, // ✅ NEW
+
+  getReservationsByUserId, // ✅ REQUIRED for MY_RESERVATIONS
+  getReservationsByUserEmail, // ✅ optional
 };

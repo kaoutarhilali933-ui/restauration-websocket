@@ -11,7 +11,8 @@ const {
   getReservations,
   getReservationById,
   deleteReservationById,
-  getReservationsByUserId, // ✅ NOW EXISTS
+  cancelReservationById, // ✅ NEW
+  getReservationsByUserId,
 } = require("./database");
 
 const Restaurant = require("./models/Restaurant");
@@ -42,8 +43,8 @@ restaurant.addTable(new Table(2, 2));
 restaurant.addTable(new Table(3, 6));
 
 // ---------------- BROADCAST ----------------
-function broadcast(message) {
-  const payload = JSON.stringify(message);
+function broadcast(messageObj) {
+  const payload = JSON.stringify(messageObj);
   clients.forEach((client) => {
     if (client.readyState === WebSocket.OPEN) {
       client.send(payload);
@@ -65,7 +66,12 @@ wss.on("connection", (socket) => {
       message = JSON.parse(data.toString());
     } catch (err) {
       console.error("❌ JSON PARSE ERROR:", err);
-      socket.send(JSON.stringify({ type: "INVALID_JSON", error: "Message must be valid JSON" }));
+      socket.send(
+        JSON.stringify({
+          type: "INVALID_JSON",
+          error: "Message must be valid JSON",
+        })
+      );
       return;
     }
 
@@ -78,17 +84,31 @@ wss.on("connection", (socket) => {
         const { email, password, role } = message;
 
         if (!email || !password) {
-          socket.send(JSON.stringify({ type: "REGISTER_FAILED", reason: "EMAIL_AND_PASSWORD_REQUIRED" }));
+          socket.send(
+            JSON.stringify({
+              type: "REGISTER_FAILED",
+              reason: "EMAIL_AND_PASSWORD_REQUIRED",
+            })
+          );
           return;
         }
 
         const existing = await getUserByEmail(email);
         if (existing) {
-          socket.send(JSON.stringify({ type: "REGISTER_FAILED", reason: "Email already exists" }));
+          socket.send(
+            JSON.stringify({
+              type: "REGISTER_FAILED",
+              reason: "Email already exists",
+            })
+          );
           return;
         }
 
-        const user = await createUser({ email, password, role: role || "client" });
+        const user = await createUser({
+          email,
+          password,
+          role: role || "client",
+        });
 
         socket.send(JSON.stringify({ type: "REGISTER_SUCCESS", userId: user.id }));
         return;
@@ -99,33 +119,55 @@ wss.on("connection", (socket) => {
         const { email, password } = message;
 
         if (!email || !password) {
-          socket.send(JSON.stringify({ type: "LOGIN_FAILED", reason: "EMAIL_AND_PASSWORD_REQUIRED" }));
+          socket.send(
+            JSON.stringify({
+              type: "LOGIN_FAILED",
+              reason: "EMAIL_AND_PASSWORD_REQUIRED",
+            })
+          );
           return;
         }
 
         const user = await login(email, password);
 
         if (!user) {
-          socket.send(JSON.stringify({ type: "LOGIN_FAILED", reason: "Invalid email or password" }));
+          socket.send(
+            JSON.stringify({
+              type: "LOGIN_FAILED",
+              reason: "Invalid email or password",
+            })
+          );
           return;
         }
 
         currentUser = user;
 
-        socket.send(JSON.stringify({ type: "LOGIN_SUCCESS", userId: user.id, role: user.role }));
+        socket.send(
+          JSON.stringify({
+            type: "LOGIN_SUCCESS",
+            userId: user.id,
+            role: user.role,
+          })
+        );
         return;
       }
 
       // ================= BOOK TABLE =================
       if (message.type === "BOOK_TABLE") {
         if (!currentUser) {
-          socket.send(JSON.stringify({ type: "UNAUTHORIZED", reason: "You must login first" }));
+          socket.send(
+            JSON.stringify({
+              type: "UNAUTHORIZED",
+              reason: "You must login first",
+            })
+          );
           return;
         }
 
         const { date, timeSlot, numberOfGuests } = message;
+        const guests = Number(numberOfGuests);
 
-        if (!date || !timeSlot || !numberOfGuests) {
+        if (!date || !timeSlot || Number.isNaN(guests) || guests <= 0) {
           socket.send(JSON.stringify({ type: "BOOKING_FAILED", reason: "INVALID_DATA" }));
           return;
         }
@@ -144,9 +186,7 @@ wss.on("connection", (socket) => {
           return;
         }
 
-        const possibleTables = restaurant.tables.filter(
-          (t) => t.capacity >= Number(numberOfGuests)
-        );
+        const possibleTables = restaurant.tables.filter((t) => t.capacity >= guests);
 
         const existingReservations = await getReservations();
         let selectedTable = null;
@@ -171,20 +211,56 @@ wss.on("connection", (socket) => {
           table_id: selectedTable.id,
           date,
           time: timeSlot,
-          guests: Number(numberOfGuests),
+          guests: guests,
         });
 
-        socket.send(JSON.stringify({
-          type: "BOOKING_SUCCESS",
-          reservationId: newReservation.id,
-          tableId: selectedTable.id,
-        }));
+        socket.send(
+          JSON.stringify({
+            type: "BOOKING_SUCCESS",
+            reservationId: newReservation.id,
+            tableId: selectedTable.id,
+            status: "confirmed",
+          })
+        );
 
         broadcast({ type: "TABLE_UPDATE", tableId: selectedTable.id, reserved: true });
         return;
       }
 
-      // ================= ✅ MY RESERVATIONS (CLIENT) =================
+      // ================= CANCEL RESERVATION (CLIENT) =================
+      if (message.type === "CANCEL_RESERVATION") {
+        if (!currentUser) {
+          socket.send(JSON.stringify({ type: "UNAUTHORIZED" }));
+          return;
+        }
+
+        const { reservationId } = message;
+        if (!reservationId) {
+          socket.send(JSON.stringify({ type: "CANCEL_FAILED", reason: "RESERVATION_ID_REQUIRED" }));
+          return;
+        }
+
+        const cancelled = await cancelReservationById(Number(reservationId), currentUser.id);
+
+        if (!cancelled) {
+          socket.send(JSON.stringify({ type: "CANCEL_FAILED", reason: "NOT_ALLOWED_OR_NOT_FOUND" }));
+          return;
+        }
+
+        // ✅ notify requester
+        socket.send(JSON.stringify({ type: "CANCEL_SUCCESS", reservationId: Number(reservationId) }));
+
+        // ✅ notify everyone (optional but pro)
+        broadcast({ type: "RESERVATION_CANCELLED", reservationId: Number(reservationId) });
+
+        // 🔥 IMPORTANT:
+        // On ne libère PAS automatiquement la table ici car ta logique de tables
+        // est "date + timeSlot". Le refresh se fera en rechargeant les réservations.
+        // (On pourra améliorer ça dans une prochaine feature.)
+        return;
+      }
+
+      // ================= MY RESERVATIONS (CLIENT) =================
       if (message.type === "MY_RESERVATIONS") {
         if (!currentUser) {
           socket.send(JSON.stringify({ type: "UNAUTHORIZED" }));
@@ -193,10 +269,12 @@ wss.on("connection", (socket) => {
 
         const reservations = await getReservationsByUserId(currentUser.id);
 
-        socket.send(JSON.stringify({
-          type: "MY_RESERVATIONS_LIST",
-          data: reservations,
-        }));
+        socket.send(
+          JSON.stringify({
+            type: "MY_RESERVATIONS_LIST",
+            data: reservations,
+          })
+        );
         return;
       }
 
@@ -240,7 +318,11 @@ wss.on("connection", (socket) => {
           userId: reservation.user_id,
         });
 
-        broadcast({ type: "TABLE_UPDATE", tableId: reservation.table_id, reserved: false });
+        broadcast({
+          type: "TABLE_UPDATE",
+          tableId: reservation.table_id,
+          reserved: false,
+        });
         return;
       }
 
