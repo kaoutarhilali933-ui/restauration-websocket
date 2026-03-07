@@ -1,11 +1,8 @@
 const socket = new WebSocket("ws://localhost:3000");
 
 let currentUserRole = null;
-
-// ✅ Pour savoir si la réservation supprimée est la tienne
 let myLastReservationId = null;
 
-// ✅ Timeout messages
 let bookingMsgTimeout;
 let authMsgTimeout;
 let myResMsgTimeout;
@@ -36,6 +33,20 @@ function renderTables() {
   });
 }
 
+/* ================= STATUS BADGES ================= */
+
+function getStatusBadge(status) {
+  const s = (status || "").toLowerCase();
+
+  if (s === "confirmed") {
+    return `<span class="badge badge-confirmed">🟢 Confirmed</span>`;
+  }
+  if (s === "cancelled") {
+    return `<span class="badge badge-cancelled">🔴 Cancelled</span>`;
+  }
+  return `<span class="badge badge-pending">🟡 Pending</span>`;
+}
+
 /* ================= WEBSOCKET ================= */
 
 socket.onopen = () => {
@@ -46,7 +57,6 @@ socket.onmessage = (event) => {
   const data = JSON.parse(event.data);
   log(JSON.stringify(data));
 
-  // REGISTER
   if (data.type === "REGISTER_SUCCESS") {
     showAuthMessage("Registration successful 🎉", true);
     return;
@@ -57,13 +67,11 @@ socket.onmessage = (event) => {
     return;
   }
 
-  // LOGIN
   if (data.type === "LOGIN_SUCCESS") {
     currentUserRole = data.role;
     showAuthMessage("Login successful ✅", true);
     showSectionsByRole();
 
-    // ✅ Auto-load my reservations for clients
     if (currentUserRole === "client") {
       document.getElementById("myReservationsSection").style.display = "block";
       loadMyReservations();
@@ -77,41 +85,44 @@ socket.onmessage = (event) => {
     return;
   }
 
-  // ✅ Table update for everyone
   if (data.type === "TABLE_UPDATE") {
     const table = tables.find(t => t.id === data.tableId);
     if (table) table.reserved = data.reserved;
-
     renderTables();
     return;
   }
 
-  // ✅ BOOKING SUCCESS (only the requester receives this)
   if (data.type === "BOOKING_SUCCESS") {
     myLastReservationId = data.reservationId;
-    showBookingMessage("Reservation successful 🎉", true);
-
-    // ✅ Refresh my reservations after booking
-    if (currentUserRole === "client") {
-      loadMyReservations();
-    }
-
+    showBookingMessage("Reservation successful 🎉 (confirmed)", true);
+    if (currentUserRole === "client") loadMyReservations();
     return;
   }
 
-  // BOOKING FAILED
   if (data.type === "BOOKING_FAILED") {
     showBookingMessage("Reservation failed ❌ (" + data.reason + ")", false);
     return;
   }
 
-  // ADMIN LIST
-  if (data.type === "RESERVATIONS_LIST") {
-    renderReservations(data.data);
+  if (data.type === "CANCEL_SUCCESS") {
+    showMyReservationsMessage("Reservation cancelled ✅", true);
+    loadMyReservations();
     return;
   }
 
-  // ✅ MY RESERVATIONS LIST (client)
+  if (data.type === "CANCEL_FAILED") {
+    showMyReservationsMessage("Cancel failed ❌ (" + data.reason + ")", false);
+    return;
+  }
+
+  if (data.type === "RESERVATIONS_LIST") {
+    // ✅ store + apply filters + update stats
+    adminReservationsRaw = Array.isArray(data.data) ? data.data : [];
+    applyAdminFilters();
+    updateAdminStats(adminReservationsRaw);
+    return;
+  }
+
   if (data.type === "MY_RESERVATIONS_LIST") {
     document.getElementById("myReservationsSection").style.display = "block";
     renderMyReservations(data.data);
@@ -119,28 +130,25 @@ socket.onmessage = (event) => {
     return;
   }
 
-  // ✅ DELETE EVENT (everyone receives)
   if (data.type === "RESERVATION_DELETED") {
-    // 1) message global
     showBookingMessage(`A reservation was deleted ✅ (table ${data.tableId} freed)`, true);
 
-    // 2) message perso seulement si c'est la tienne
     if (myLastReservationId && data.reservationId === myLastReservationId) {
       showBookingMessage("Your reservation was cancelled ⚠️", false);
-      myLastReservationId = null; // reset
-      // ✅ refresh list
+      myLastReservationId = null;
       if (currentUserRole === "client") loadMyReservations();
     }
 
-    // 3) si admin, refresh la liste
-    if (currentUserRole === "admin") {
-      getReservations();
-    }
-
+    if (currentUserRole === "admin") getReservations();
     return;
   }
 
-  // UNAUTHORIZED
+  if (data.type === "RESERVATION_CANCELLED") {
+    if (currentUserRole === "admin") getReservations();
+    if (currentUserRole === "client") loadMyReservations();
+    return;
+  }
+
   if (data.type === "UNAUTHORIZED") {
     showBookingMessage("Unauthorized ❌", false);
     return;
@@ -221,11 +229,51 @@ function showBookingMessage(message, success) {
 
 /* ================= ADMIN ================= */
 
+// ✅ store all admin reservations here
+let adminReservationsRaw = [];
+
 function getReservations() {
-  socket.send(JSON.stringify({
-    type: "GET_RESERVATIONS"
-  }));
+  socket.send(JSON.stringify({ type: "GET_RESERVATIONS" }));
 }
+
+function updateAdminStats(reservations) {
+  const total = reservations.length;
+  const confirmed = reservations.filter(r => (r.status || "").toLowerCase() === "confirmed").length;
+  const cancelled = reservations.filter(r => (r.status || "").toLowerCase() === "cancelled").length;
+
+  const elTotal = document.getElementById("statTotal");
+  const elConfirmed = document.getElementById("statConfirmed");
+  const elCancelled = document.getElementById("statCancelled");
+
+  if (elTotal) elTotal.textContent = total;
+  if (elConfirmed) elConfirmed.textContent = confirmed;
+  if (elCancelled) elCancelled.textContent = cancelled;
+}
+
+function applyAdminFilters() {
+  const searchInput = document.getElementById("adminSearchInput");
+  const statusFilter = document.getElementById("adminStatusFilter");
+
+  const search = (searchInput?.value || "").trim().toLowerCase();
+  const filter = (statusFilter?.value || "all").toLowerCase();
+
+  let filtered = [...adminReservationsRaw];
+
+  // filter by email search
+  if (search.length > 0) {
+    filtered = filtered.filter(r => (r.email || "").toLowerCase().includes(search));
+  }
+
+  // filter by status
+  if (filter !== "all") {
+    filtered = filtered.filter(r => (r.status || "").toLowerCase() === filter);
+  }
+
+  renderReservations(filtered);
+}
+
+// ✅ make available for HTML oninput/onchange
+window.applyAdminFilters = applyAdminFilters;
 
 function renderReservations(reservations) {
   const tbody = document.querySelector("#adminTable tbody");
@@ -241,10 +289,9 @@ function renderReservations(reservations) {
       <td>${res.date}</td>
       <td>${res.time}</td>
       <td>${res.guests}</td>
+      <td>${getStatusBadge(res.status)}</td>
       <td>
-        <button onclick="deleteReservation(${res.id})">
-          Delete
-        </button>
+        <button onclick="deleteReservation(${res.id})">Delete</button>
       </td>
     `;
 
@@ -253,42 +300,54 @@ function renderReservations(reservations) {
 }
 
 function deleteReservation(id) {
-  socket.send(JSON.stringify({
-    type: "DELETE_RESERVATION",
-    reservationId: id
-  }));
+  socket.send(JSON.stringify({ type: "DELETE_RESERVATION", reservationId: id }));
 }
+window.deleteReservation = deleteReservation;
 
 /* ================= MY RESERVATIONS (CLIENT) ================= */
 
 function loadMyReservations() {
-  // ✅ Debug : on affiche ce qu’on envoie
   log("➡️ Sending MY_RESERVATIONS");
   socket.send(JSON.stringify({ type: "MY_RESERVATIONS" }));
 }
-
-// ✅ Important : rendre la fonction accessible au onclick HTML
 window.loadMyReservations = loadMyReservations;
+
+function cancelReservation(id) {
+  const ok = confirm("Are you sure you want to cancel this reservation?");
+  if (!ok) return;
+
+  socket.send(JSON.stringify({ type: "CANCEL_RESERVATION", reservationId: id }));
+}
+window.cancelReservation = cancelReservation;
 
 function renderMyReservations(reservations) {
   const tbody = document.querySelector("#myReservationsTable tbody");
   tbody.innerHTML = "";
 
   if (!reservations || reservations.length === 0) {
-    tbody.innerHTML = `<tr><td colspan="6" style="text-align:center;">No reservations</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="7" style="text-align:center;">No reservations</td></tr>`;
     return;
   }
 
   reservations.forEach(r => {
     const row = document.createElement("tr");
+
     row.innerHTML = `
       <td>${r.id}</td>
       <td>${r.date}</td>
       <td>${r.time}</td>
       <td>${r.guests}</td>
-      <td>${r.status}</td>
+      <td>${getStatusBadge(r.status)}</td>
       <td>${r.table_number ?? ""}</td>
+      <td>
+        ${
+          (r.status || "").toLowerCase() !== "cancelled"
+            ? `<button class="btn-cancel" onclick="cancelReservation(${r.id})">Cancel</button>`
+            : `<span style="color:gray;">—</span>`
+        }
+      </td>
     `;
+
     tbody.appendChild(row);
   });
 }
