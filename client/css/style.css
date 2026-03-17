@@ -396,6 +396,83 @@ h2 {
 }
 
 /* =====================================================
+   INDICATEUR WEBSOCKET
+===================================================== */
+.ws-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  display: inline-block;
+  flex-shrink: 0;
+}
+
+.ws-dot-connected {
+  background: var(--success);
+  box-shadow: 0 0 0 2px rgba(34, 197, 94, 0.25);
+}
+
+.ws-dot-disconnected {
+  background: var(--danger);
+  box-shadow: 0 0 0 2px rgba(239, 68, 68, 0.25);
+  animation: blink 1.2s ease-in-out infinite;
+}
+
+@keyframes blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.3; }
+}
+
+/* =====================================================
+   TOASTS
+===================================================== */
+#toastContainer {
+  position: fixed;
+  bottom: 24px;
+  right: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  z-index: 200;
+  pointer-events: none;
+}
+
+.toast {
+  background: white;
+  border-radius: var(--radius-sm);
+  padding: 14px 18px;
+  box-shadow: var(--shadow-lg);
+  font-size: 14px;
+  font-weight: 600;
+  border-left: 4px solid;
+  max-width: 320px;
+  animation: toastIn 0.3s ease, toastOut 0.4s ease 3.5s forwards;
+}
+
+.toast-success {
+  border-left-color: var(--success);
+  color: var(--success-text);
+}
+
+.toast-info {
+  border-left-color: var(--primary);
+  color: var(--primary-dark);
+}
+
+.toast-warning {
+  border-left-color: var(--warning);
+  color: var(--warning-text);
+}
+
+@keyframes toastIn {
+  from { transform: translateX(110%); opacity: 0; }
+  to   { transform: translateX(0);    opacity: 1; }
+}
+
+@keyframes toastOut {
+  to { transform: translateX(110%); opacity: 0; }
+}
+
+/* =====================================================
    MAIN APP (compense le header fixe)
 ===================================================== */
 #appMain {
@@ -731,6 +808,81 @@ tbody tr:hover {
   flex: 1;
   padding: 28px 32px;
   overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+.admin-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+/* =====================================================
+   DASHBOARD HEADER
+===================================================== */
+.dashboard-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-bottom: 4px;
+}
+
+.dashboard-title {
+  font-size: 22px;
+  font-weight: 800;
+  color: var(--text);
+  margin-bottom: 4px;
+}
+
+.dashboard-subtitle {
+  font-size: 13px;
+  color: var(--text-muted);
+  font-weight: 400;
+}
+
+/* =====================================================
+   ACTIVITE RECENTE
+===================================================== */
+.recent-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.recent-item:last-child {
+  border-bottom: none;
+  padding-bottom: 0;
+}
+
+.recent-item:first-child {
+  padding-top: 0;
+}
+
+.recent-item-left {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.recent-item-email {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.recent-item-meta {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.recent-empty {
+  font-size: 14px;
+  color: var(--text-muted);
+  padding: 8px 0;
 }
 
 /* =====================================================
@@ -828,6 +980,12 @@ tbody tr:hover {
 
   .admin-tools {
     grid-template-columns: 1fr;
+  }
+
+  .dashboard-header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 12px;
   }
 }
 
