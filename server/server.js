@@ -1,5 +1,7 @@
 // server/server.js
+require("dotenv").config();
 const WebSocket = require("ws");
+const jwt = require("jsonwebtoken");
 
 const {
   initDb,
@@ -20,7 +22,30 @@ const {
 const Restaurant = require("./models/Restaurant");
 const Table = require("./models/Table");
 
-const PORT = 3000;
+const PORT = process.env.PORT || 3000;
+const JWT_SECRET = process.env.JWT_SECRET;
+const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || "7d";
+
+if (!JWT_SECRET) {
+  console.error("❌ JWT_SECRET manquant. Créez un fichier server/.env (voir server/.env.example).");
+  process.exit(1);
+}
+
+function generateToken(user) {
+  return jwt.sign(
+    { id: user.id, email: user.email, role: user.role },
+    JWT_SECRET,
+    { expiresIn: JWT_EXPIRES_IN }
+  );
+}
+
+function verifyToken(token) {
+  try {
+    return jwt.verify(token, JWT_SECRET);
+  } catch {
+    return null;
+  }
+}
 
 // ---------------- INIT DB ----------------
 (async () => {
@@ -150,11 +175,50 @@ wss.on("connection", (socket) => {
         }
 
         currentUser = user;
+        const token = generateToken(user);
 
         socket.send(
           JSON.stringify({
             type: "LOGIN_SUCCESS",
             userId: user.id,
+            email: user.email,
+            role: user.role,
+            token
+          })
+        );
+        return;
+      }
+
+      // ================= AUTHENTICATE (reconnexion avec token) =================
+      if (message.type === "AUTHENTICATE") {
+        const { token } = message;
+
+        if (!token) {
+          socket.send(JSON.stringify({ type: "AUTH_FAILED", reason: "TOKEN_REQUIRED" }));
+          return;
+        }
+
+        const payload = verifyToken(token);
+
+        if (!payload) {
+          socket.send(JSON.stringify({ type: "AUTH_FAILED", reason: "INVALID_OR_EXPIRED_TOKEN" }));
+          return;
+        }
+
+        const user = await getUserByEmail(payload.email);
+
+        if (!user) {
+          socket.send(JSON.stringify({ type: "AUTH_FAILED", reason: "USER_NOT_FOUND" }));
+          return;
+        }
+
+        currentUser = user;
+
+        socket.send(
+          JSON.stringify({
+            type: "AUTH_SUCCESS",
+            userId: user.id,
+            email: user.email,
             role: user.role
           })
         );
