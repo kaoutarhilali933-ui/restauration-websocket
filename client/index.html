@@ -32,8 +32,8 @@
     <div class="login-card">
 
       <div class="login-tabs">
-        <button class="tab-btn active" data-tab="login" onclick="switchTab('login')">Connexion</button>
-        <button class="tab-btn" data-tab="register" onclick="switchTab('register')">Inscription</button>
+        <button type="button" class="tab-btn active" data-tab="login" onclick="switchTab('login')">Connexion</button>
+        <button type="button" class="tab-btn" data-tab="register" onclick="switchTab('register')">Inscription</button>
       </div>
 
       <!-- Connexion -->
@@ -48,7 +48,7 @@
           <label for="loginPassword">Mot de passe</label>
           <input type="password" id="loginPassword" placeholder="••••••••">
         </div>
-        <button class="btn-primary btn-full" onclick="login()">Se connecter</button>
+        <button type="button" class="btn-primary btn-full" onclick="login()">Se connecter</button>
       </div>
 
       <!-- Inscription -->
@@ -63,7 +63,7 @@
           <label for="registerPassword">Mot de passe</label>
           <input type="password" id="registerPassword" placeholder="••••••••">
         </div>
-        <button class="btn-primary btn-full" onclick="register()">Creer mon compte</button>
+        <button type="button" class="btn-primary btn-full" onclick="register()">Creer mon compte</button>
       </div>
 
       <!-- Message auth — ID conserve -->
@@ -82,15 +82,18 @@
   <div class="header-brand">
     <span class="header-logo">&#127860;</span>
     <span class="header-title">La Belle Table</span>
+    <span id="wsIndicator" class="ws-dot ws-dot-connected" title="WebSocket connecte"></span>
   </div>
   <div class="header-profile">
     <div class="profile-pill">
       <span id="profileEmail" class="profile-pill-email"></span>
       <span id="profileRole" class="profile-pill-badge"></span>
     </div>
-    <button class="btn-logout" onclick="logout()">Deconnexion</button>
+    <button type="button" class="btn-logout" onclick="logout()">Deconnexion</button>
   </div>
 </header>
+
+<div id="toastContainer"></div>
 
 
 <!-- =======================================================
@@ -136,11 +139,11 @@
         <div class="booking-form">
           <div class="form-group">
             <label for="date">Date</label>
-            <input type="date" id="date">
+            <input type="date" id="date" onchange="checkAvailability()">
           </div>
           <div class="form-group">
             <label for="timeSlot">Creneau horaire</label>
-            <select id="timeSlot">
+            <select id="timeSlot" onchange="checkAvailability()">
               <option value="12h-14h">12h - 14h</option>
               <option value="19h-21h">19h - 21h</option>
             </select>
@@ -150,7 +153,7 @@
             <input type="number" id="guests" min="1" placeholder="2">
           </div>
           <div class="form-group booking-action">
-            <button class="btn-primary btn-full" onclick="bookTable()">Reserver</button>
+            <button type="button" class="btn-primary btn-full" onclick="bookTable()">Reserver</button>
           </div>
         </div>
         <p id="bookingMessage" class="message"></p>
@@ -160,7 +163,7 @@
       <section id="myReservationsSection" class="card" style="display:none">
         <div class="card-header">
           <h2>Mes reservations</h2>
-          <button class="btn-secondary" onclick="loadMyReservations()">Actualiser</button>
+          <button type="button" class="btn-secondary" onclick="loadMyReservations()">Actualiser</button>
         </div>
         <div class="table-wrapper">
           <table id="myReservationsTable">
@@ -197,18 +200,27 @@
         <div class="sidebar-role">Administrateur</div>
       </div>
       <nav class="sidebar-nav">
-        <div class="nav-item active">Tableau de bord</div>
-        <div class="nav-item">Reservations</div>
-        <div class="nav-item">Tables</div>
+        <div class="nav-item active" data-section="dashboard" onclick="switchAdminSection('dashboard')">Tableau de bord</div>
+        <div class="nav-item" data-section="reservations" onclick="switchAdminSection('reservations')">Reservations</div>
+        <div class="nav-item" data-section="tables" onclick="switchAdminSection('tables')">Tables</div>
       </nav>
     </aside>
 
     <div class="admin-main">
 
-      <!-- adminSection — ID conserve -->
-      <section id="adminSection" style="display:none">
+      <!-- ======= PANNEAU : Tableau de bord ======= -->
+      <div id="admin-panel-dashboard" class="admin-panel">
 
-        <!-- Stats — IDs conserves : adminStats, statTotal, statConfirmed, statCancelled -->
+        <!-- En-tete du dashboard -->
+        <div class="dashboard-header">
+          <div>
+            <h1 class="dashboard-title">Tableau de bord</h1>
+            <p class="dashboard-subtitle">Vue d'ensemble de La Belle Table</p>
+          </div>
+          <button type="button" class="btn-secondary" onclick="getReservations()">Actualiser</button>
+        </div>
+
+        <!-- Stats — IDs conserves : adminStats, statTotal, statConfirmed, statCancelled, statPending -->
         <div class="stats-grid" id="adminStats">
           <div class="stat-card">
             <div class="stat-value" id="statTotal">0</div>
@@ -228,56 +240,89 @@
           </div>
         </div>
 
-        <!-- Gestion reservations -->
+        <!-- Activite recente -->
         <div class="card">
           <div class="card-header">
-            <h2>Gestion des reservations</h2>
-            <button class="btn-secondary" onclick="getReservations()">Charger</button>
+            <h2>Activite recente</h2>
+            <span class="realtime-badge">Temps reel</span>
           </div>
-
-          <!-- Filtres — IDs conserves : adminSearchInput, adminStatusFilter -->
-          <div class="admin-tools">
-            <div class="form-group">
-              <label for="adminSearchInput">Rechercher par email</label>
-              <input
-                type="text"
-                id="adminSearchInput"
-                placeholder="ex : aya@gmail.com"
-                oninput="applyAdminFilters()"
-              >
-            </div>
-            <div class="form-group">
-              <label for="adminStatusFilter">Filtrer par statut</label>
-              <select id="adminStatusFilter" onchange="applyAdminFilters()">
-                <option value="all">Tous</option>
-                <option value="pending">En attente</option>
-                <option value="confirmed">Confirmees</option>
-                <option value="cancelled">Annulees</option>
-              </select>
-            </div>
-          </div>
-
-          <!-- Tableau admin — ID conserve : adminTable -->
-          <div class="table-wrapper">
-            <table id="adminTable">
-              <thead>
-                <tr>
-                  <th>ID</th>
-                  <th>Email</th>
-                  <th>Table</th>
-                  <th>Date</th>
-                  <th>Creneau</th>
-                  <th>Invites</th>
-                  <th>Statut</th>
-                  <th>Actions</th>
-                </tr>
-              </thead>
-              <tbody></tbody>
-            </table>
+          <div id="dashboardRecentList">
+            <p class="recent-empty">Chargement en cours...</p>
           </div>
         </div>
 
-      </section>
+      </div>
+
+      <!-- ======= PANNEAU : Reservations ======= -->
+      <div id="admin-panel-reservations" class="admin-panel" style="display:none">
+
+        <!-- ID conserve : adminSection — garde pour compatibilite eventuelle -->
+        <section id="adminSection">
+
+          <div class="card">
+            <div class="card-header">
+              <h2>Gestion des reservations</h2>
+              <button type="button" class="btn-secondary" onclick="getReservations()">Actualiser</button>
+            </div>
+
+            <!-- Filtres — IDs conserves : adminSearchInput, adminStatusFilter -->
+            <div class="admin-tools">
+              <div class="form-group">
+                <label for="adminSearchInput">Rechercher par email</label>
+                <input
+                  type="text"
+                  id="adminSearchInput"
+                  placeholder="ex : aya@gmail.com"
+                  oninput="applyAdminFilters()"
+                >
+              </div>
+              <div class="form-group">
+                <label for="adminStatusFilter">Filtrer par statut</label>
+                <select id="adminStatusFilter" onchange="applyAdminFilters()">
+                  <option value="all">Tous</option>
+                  <option value="pending">En attente</option>
+                  <option value="confirmed">Confirmees</option>
+                  <option value="cancelled">Annulees</option>
+                </select>
+              </div>
+            </div>
+
+            <!-- Tableau admin — ID conserve : adminTable -->
+            <div class="table-wrapper">
+              <table id="adminTable">
+                <thead>
+                  <tr>
+                    <th>ID</th>
+                    <th>Email</th>
+                    <th>Table</th>
+                    <th>Date</th>
+                    <th>Creneau</th>
+                    <th>Invites</th>
+                    <th>Statut</th>
+                    <th>Actions</th>
+                  </tr>
+                </thead>
+                <tbody></tbody>
+              </table>
+            </div>
+          </div>
+
+        </section>
+      </div>
+
+      <!-- ======= PANNEAU : Tables ======= -->
+      <div id="admin-panel-tables" class="admin-panel" style="display:none">
+
+        <div class="card">
+          <div class="card-header">
+            <h2>Etat des tables</h2>
+            <span class="realtime-badge">Temps reel</span>
+          </div>
+          <div id="adminTablesContainer" class="tables-grid"></div>
+        </div>
+
+      </div>
+
     </div>
   </div>
 

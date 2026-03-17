@@ -150,7 +150,7 @@ async function hasUserBookingForSlot(userId, date, time) {
 // ✅ confirm reservation (admin only)
 async function confirmReservationById(reservationId) {
   const reservation = await get(
-    `SELECT id, table_id, user_id, status FROM reservations WHERE id = ?`,
+    `SELECT id, table_id, user_id, status, date, time FROM reservations WHERE id = ?`,
     [reservationId]
   );
 
@@ -164,14 +164,16 @@ async function confirmReservationById(reservationId) {
   return {
     id: reservation.id,
     table_id: reservation.table_id,
-    user_id: reservation.user_id
+    user_id: reservation.user_id,
+    date: reservation.date,
+    time: reservation.time
   };
 }
 
 // ✅ cancel reservation (client can cancel ONLY his own reservation)
 async function cancelReservationById(reservationId, userId) {
   const res = await get(
-    `SELECT id, table_id, user_id, status FROM reservations WHERE id = ? AND user_id = ?`,
+    `SELECT id, table_id, user_id, status, date, time FROM reservations WHERE id = ? AND user_id = ?`,
     [reservationId, userId]
   );
 
@@ -181,7 +183,7 @@ async function cancelReservationById(reservationId, userId) {
     reservationId,
   ]);
 
-  return { id: reservationId, table_id: res.table_id, user_id: res.user_id };
+  return { id: reservationId, table_id: res.table_id, user_id: res.user_id, date: res.date, time: res.time };
 }
 
 // ✅ get reservations for connected client by user_id
@@ -233,6 +235,28 @@ async function getTablesStatus() {
 }
 
 // -------------------------
+// TABLES STATUS PAR SLOT
+// -------------------------
+async function getTablesStatusForSlot(date, timeSlot) {
+  return await all(`
+    SELECT
+      t.id,
+      t.seats AS capacity,
+      COALESCE(
+        (SELECT status FROM reservations
+         WHERE table_id = t.id
+           AND date = ?
+           AND time = ?
+           AND status != 'cancelled'
+         ORDER BY id DESC LIMIT 1),
+        'available'
+      ) AS status
+    FROM tables t
+    ORDER BY t.id
+  `, [date, timeSlot]);
+}
+
+// -------------------------
 // EXPORTS
 // -------------------------
 module.exports = {
@@ -255,4 +279,5 @@ module.exports = {
   getReservationsByUserId,
   getReservationsByUserEmail,
   getTablesStatus,
+  getTablesStatusForSlot,
 };

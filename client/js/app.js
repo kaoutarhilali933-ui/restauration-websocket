@@ -1,4 +1,4 @@
-const socket = new WebSocket("ws://localhost:3000");
+let socket = new WebSocket("ws://localhost:3000");
 
 let currentUserRole = null;
 let myLastReservationId = null;
@@ -16,36 +16,38 @@ const tables = [
 ];
 
 function renderTables() {
-  const container = document.getElementById("tablesContainer");
-  if (!container) return; // admin n'a pas ce conteneur visible
-  container.innerHTML = "";
+  ["tablesContainer", "adminTablesContainer"].forEach(id => {
+    const container = document.getElementById(id);
+    if (!container) return;
+    container.innerHTML = "";
 
-  tables.forEach(table => {
-    const div = document.createElement("div");
+    tables.forEach(table => {
+      const div = document.createElement("div");
 
-    const cssClass =
-      table.status === "confirmed"
-        ? "table reserved"
-        : table.status === "pending"
-        ? "table pending"
-        : "table available";
+      const cssClass =
+        table.status === "confirmed"
+          ? "table reserved"
+          : table.status === "pending"
+          ? "table pending"
+          : "table available";
 
-    const label =
-      table.status === "confirmed"
-        ? "Confirme"
-        : table.status === "pending"
-        ? "En attente"
-        : "Disponible";
+      const label =
+        table.status === "confirmed"
+          ? "Confirme"
+          : table.status === "pending"
+          ? "En attente"
+          : "Disponible";
 
-    div.className = cssClass;
+      div.className = cssClass;
 
-    div.innerHTML = `
-      <h3>Table ${table.id}</h3>
-      <p>Capacite : ${table.capacity} pers.</p>
-      <p>${label}</p>
-    `;
+      div.innerHTML = `
+        <h3>Table ${table.id}</h3>
+        <p>Capacite : ${table.capacity} pers.</p>
+        <p>${label}</p>
+      `;
 
-    container.appendChild(div);
+      container.appendChild(div);
+    });
   });
 }
 
@@ -65,26 +67,41 @@ function getStatusBadge(status) {
 
 /* ================= WEBSOCKET ================= */
 
-socket.onopen = () => {
-  log("Connected to server");
-  const token = localStorage.getItem("token");
-  if (token) {
-    socket.send(JSON.stringify({ type: "AUTHENTICATE", token }));
-  }
-};
+function initSocketHandlers() {
+  socket.onopen = () => {
+    log("Connected to server");
+    setWsIndicator(true);
 
-socket.onclose = () => {
-  log("Connexion au serveur perdue.");
-  if (currentUserRole !== null) {
-    const msg = document.getElementById("bookingMessage") || document.getElementById("authMessage");
-    if (msg) {
-      msg.textContent = "Connexion perdue. Rechargez la page.";
-      msg.style.color = "red";
+    const msg = document.getElementById("bookingMessage") ||
+                document.getElementById("authMessage");
+    if (msg && msg.textContent.includes("Reconnexion")) {
+      msg.textContent = "";
     }
-  }
-};
 
-socket.onmessage = (event) => {
+    const token = sessionStorage.getItem("token");
+    if (token) {
+      socket.send(JSON.stringify({ type: "AUTHENTICATE", token }));
+    }
+  };
+
+  socket.onclose = () => {
+    log("Connexion au serveur perdue. Tentative de reconnexion...");
+    setWsIndicator(false);
+
+    const msg = document.getElementById("bookingMessage") ||
+                document.getElementById("authMessage");
+    if (msg) {
+      msg.textContent = "Connexion perdue. Reconnexion en cours...";
+      msg.style.color = "orange";
+    }
+
+    setTimeout(() => {
+      socket = new WebSocket("ws://localhost:3000");
+      initSocketHandlers();
+    }, 3000);
+  };
+
+  socket.onmessage = (event) => {
   const data = JSON.parse(event.data);
   log(JSON.stringify(data));
 
@@ -100,9 +117,9 @@ socket.onmessage = (event) => {
 
   if (data.type === "LOGIN_SUCCESS") {
     currentUserRole = data.role;
-    localStorage.setItem("token", data.token);
-    localStorage.setItem("userEmail", data.email);
-    localStorage.setItem("userRole", data.role);
+    sessionStorage.setItem("token", data.token);
+    sessionStorage.setItem("userEmail", data.email);
+    sessionStorage.setItem("userRole", data.role);
     showAuthMessage("Connexion reussie !", true);
     showSectionsByRole(data.email);
 
@@ -131,9 +148,9 @@ socket.onmessage = (event) => {
   }
 
   if (data.type === "AUTH_FAILED") {
-    localStorage.removeItem("token");
-    localStorage.removeItem("userEmail");
-    localStorage.removeItem("userRole");
+    sessionStorage.removeItem("token");
+    sessionStorage.removeItem("userEmail");
+    sessionStorage.removeItem("userRole");
     return;
   }
 
@@ -143,6 +160,14 @@ socket.onmessage = (event) => {
   }
 
   if (data.type === "TABLES_STATUS") {
+    // A la connexion, toutes les tables sont disponibles par defaut
+    // La dispo reelle se charge quand l'utilisateur choisit date + creneau
+    tables.forEach(t => t.status = "available");
+    renderTables();
+    return;
+  }
+
+  if (data.type === "TABLES_AVAILABILITY") {
     data.tables.forEach(t => {
       const table = tables.find(x => x.id === t.id);
       if (table) table.status = t.status;
@@ -152,11 +177,18 @@ socket.onmessage = (event) => {
   }
 
   if (data.type === "TABLE_UPDATE") {
-    const table = tables.find(t => t.id === data.tableId);
-    if (table) {
-      table.status = data.status || "available";
+    const selectedDate = document.getElementById("date")?.value;
+    const selectedSlot = document.getElementById("timeSlot")?.value;
+
+    // Appliquer seulement si le client regarde le meme slot
+    const sameSlot = !data.date || !data.timeSlot ||
+      (data.date === selectedDate && data.timeSlot === selectedSlot);
+
+    if (sameSlot) {
+      const table = tables.find(t => t.id === data.tableId);
+      if (table) table.status = data.status || "available";
+      renderTables();
     }
-    renderTables();
     return;
   }
 
@@ -171,13 +203,15 @@ socket.onmessage = (event) => {
 
   if (data.type === "BOOKING_FAILED") {
     showBookingMessage("Reservation echouee : " + data.reason, false);
+    if (data.reason === "NO_TABLE_AVAILABLE") {
+      checkAvailability(); // rafraichit les couleurs des tables pour ce slot
+    }
     return;
   }
 
   if (data.type === "CONFIRM_SUCCESS") {
     showBookingMessage("Reservation confirmee !", true);
-    if (currentUserRole === "admin") getReservations();
-    if (currentUserRole === "client") loadMyReservations();
+    // La mise a jour visuelle est geree par RESERVATION_CONFIRMED (broadcast)
     return;
   }
 
@@ -188,7 +222,7 @@ socket.onmessage = (event) => {
 
   if (data.type === "CANCEL_SUCCESS") {
     showMyReservationsMessage("Reservation annulee.", true);
-    loadMyReservations();
+    updateClientRowStatus(data.reservationId, "cancelled");
     return;
   }
 
@@ -201,6 +235,7 @@ socket.onmessage = (event) => {
     adminReservationsRaw = Array.isArray(data.data) ? data.data : [];
     applyAdminFilters();
     updateAdminStats(adminReservationsRaw);
+    renderDashboardRecent(adminReservationsRaw);
     return;
   }
 
@@ -212,27 +247,40 @@ socket.onmessage = (event) => {
   }
 
   if (data.type === "RESERVATION_DELETED") {
-    showBookingMessage("Reservation supprimee (table " + data.tableId + " liberee)", true);
-
-    if (myLastReservationId && data.reservationId === myLastReservationId) {
-      showBookingMessage("Votre reservation a ete annulee.", false);
-      myLastReservationId = null;
-      if (currentUserRole === "client") loadMyReservations();
+    if (currentUserRole === "admin") {
+      showBookingMessage("Reservation supprimee (table " + data.tableId + " liberee)", true);
+      removeAdminRow(data.reservationId);
+      adminReservationsRaw = adminReservationsRaw.filter(r => r.id !== data.reservationId);
+      updateAdminStats(adminReservationsRaw);
+      renderDashboardRecent(adminReservationsRaw);
     }
-
-    if (currentUserRole === "admin") getReservations();
+    if (currentUserRole === "client" && myLastReservationId === data.reservationId) {
+      showBookingMessage("Votre reservation a ete supprimee par l'admin.", false);
+      myLastReservationId = null;
+      updateClientRowStatus(data.reservationId, "cancelled");
+    }
     return;
   }
 
   if (data.type === "RESERVATION_CANCELLED") {
-    if (currentUserRole === "admin") getReservations();
-    if (currentUserRole === "client") loadMyReservations();
+    if (currentUserRole === "admin") {
+      updateAdminRowStatus(data.reservationId, "cancelled");
+      const r = adminReservationsRaw.find(x => x.id === data.reservationId);
+      if (r) { r.status = "cancelled"; updateAdminStats(adminReservationsRaw); renderDashboardRecent(adminReservationsRaw); }
+    }
     return;
   }
 
   if (data.type === "RESERVATION_CONFIRMED") {
-    if (currentUserRole === "admin") getReservations();
-    if (currentUserRole === "client") loadMyReservations();
+    if (currentUserRole === "admin") {
+      updateAdminRowStatus(data.reservationId, "confirmed");
+      const r = adminReservationsRaw.find(x => x.id === data.reservationId);
+      if (r) { r.status = "confirmed"; updateAdminStats(adminReservationsRaw); renderDashboardRecent(adminReservationsRaw); }
+    }
+    if (currentUserRole === "client") {
+      updateClientRowStatus(data.reservationId, "confirmed");
+      showToast("Votre reservation a ete confirmee !", "success");
+    }
     return;
   }
 
@@ -240,11 +288,41 @@ socket.onmessage = (event) => {
     showBookingMessage("Action non autorisee.", false);
     return;
   }
-};
+  };
+} // fin initSocketHandlers
+
+initSocketHandlers();
 
 function log(message) {
   const el = document.getElementById("output");
   if (el) el.textContent += message + "\n";
+}
+
+/* ================= UTILITAIRES ================= */
+
+function formatDate(dateStr) {
+  if (!dateStr) return "—";
+  const [y, m, d] = dateStr.split("-");
+  return `${d}/${m}/${y}`;
+}
+
+function showToast(message, type = "info") {
+  const container = document.getElementById("toastContainer");
+  if (!container) return;
+
+  const toast = document.createElement("div");
+  toast.className = `toast toast-${type}`;
+  toast.textContent = message;
+  container.appendChild(toast);
+
+  setTimeout(() => toast.remove(), 4000);
+}
+
+function setWsIndicator(connected) {
+  const dot = document.getElementById("wsIndicator");
+  if (!dot) return;
+  dot.className = connected ? "ws-dot ws-dot-connected" : "ws-dot ws-dot-disconnected";
+  dot.title = connected ? "WebSocket connecte" : "WebSocket deconnecte";
 }
 
 /* ================= AUTH ================= */
@@ -312,7 +390,7 @@ function showSectionsByRole(email) {
     // Afficher la vue admin
     document.getElementById("adminView").style.display = "flex";
     document.getElementById("adminProfileEmail").textContent = email;
-    document.getElementById("adminSection").style.display = "block";
+    switchAdminSection("dashboard");
   }
 }
 
@@ -326,17 +404,57 @@ function switchTab(tab) {
   document.getElementById(tab + "Tab").classList.add("active");
 }
 
+/* ================= NAVIGATION ADMIN ================= */
+
+function switchAdminSection(name) {
+  document.querySelectorAll(".admin-panel").forEach(p => p.style.display = "none");
+  document.querySelectorAll(".sidebar-nav .nav-item").forEach(n => n.classList.remove("active"));
+
+  document.getElementById("admin-panel-" + name).style.display = "block";
+  document.querySelector(`.nav-item[data-section="${name}"]`).classList.add("active");
+
+  if (name === "tables") {
+    renderTables();
+  }
+}
+
 /* ================= NOUVEAU : deconnexion ================= */
 
 function logout() {
-  localStorage.removeItem("token");
-  localStorage.removeItem("userEmail");
-  localStorage.removeItem("userRole");
+  sessionStorage.removeItem("token");
+  sessionStorage.removeItem("userEmail");
+  sessionStorage.removeItem("userRole");
+  currentUserRole = null;
+  myLastReservationId = null;
+
+  // Remettre l'UI a zero sans rechargement de page
+  document.getElementById("appHeader").style.display = "none";
+  document.getElementById("appMain").style.display = "none";
+  document.getElementById("authSection").style.display = "flex";
+  document.getElementById("clientView").style.display = "none";
+  document.getElementById("adminView").style.display = "none";
+  document.getElementById("loginEmail").value = "";
+  document.getElementById("loginPassword").value = "";
+  document.getElementById("authMessage").textContent = "";
+
+  // Reinitialiser les tables
+  tables.forEach(t => t.status = "available");
+
+  // Fermer l'ancien socket et en ouvrir un nouveau
+  socket.onclose = null; // eviter le message "Connexion perdue"
   socket.close();
-  location.reload();
+  socket = new WebSocket("ws://localhost:3000");
+  initSocketHandlers();
 }
 
 /* ================= BOOKING ================= */
+
+function checkAvailability() {
+  const date = document.getElementById("date")?.value;
+  const timeSlot = document.getElementById("timeSlot")?.value;
+  if (!date || !timeSlot || !currentUserRole) return;
+  socket.send(JSON.stringify({ type: "CHECK_AVAILABILITY", date, timeSlot }));
+}
 
 function bookTable() {
   socket.send(JSON.stringify({
@@ -362,6 +480,30 @@ function showBookingMessage(message, success) {
 /* ================= ADMIN ================= */
 
 let adminReservationsRaw = [];
+
+function renderDashboardRecent(reservations) {
+  const container = document.getElementById("dashboardRecentList");
+  if (!container) return;
+
+  const recent = (reservations || []).slice(0, 5);
+
+  if (recent.length === 0) {
+    container.innerHTML = `<p class="recent-empty">Aucune reservation pour le moment.</p>`;
+    return;
+  }
+
+  container.innerHTML = recent.map(r => `
+    <div class="recent-item">
+      <div class="recent-item-left">
+        <span class="recent-item-email">${r.email}</span>
+        <span class="recent-item-meta">Table ${r.table_number} &middot; ${r.date} &middot; ${r.time} &middot; ${r.guests} pers.</span>
+      </div>
+      <div class="recent-item-right">
+        ${getStatusBadge(r.status)}
+      </div>
+    </div>
+  `).join("");
+}
 
 function getReservations() {
   socket.send(JSON.stringify({ type: "GET_RESERVATIONS" }));
@@ -420,23 +562,24 @@ function renderReservations(reservations) {
 
   reservations.forEach(res => {
     const row = document.createElement("tr");
+    row.dataset.id = res.id;
     const isPending = (res.status || "").toLowerCase() === "pending";
 
     row.innerHTML = `
       <td>${res.id}</td>
       <td>${res.email}</td>
       <td>${res.table_number}</td>
-      <td>${res.date}</td>
+      <td>${formatDate(res.date)}</td>
       <td>${res.time}</td>
       <td>${res.guests}</td>
       <td>${getStatusBadge(res.status)}</td>
       <td class="actions-cell">
         <div class="action-buttons">
           ${isPending
-            ? `<button class="btn-confirm" onclick="confirmReservation(${res.id})">Confirmer</button>`
+            ? `<button type="button" class="btn-confirm" onclick="confirmReservation(${res.id})">Confirmer</button>`
             : ""
           }
-          <button class="btn-danger" onclick="deleteReservation(${res.id})">Supprimer</button>
+          <button type="button" class="btn-danger" onclick="deleteReservation(${res.id})">Supprimer</button>
         </div>
       </td>
     `;
@@ -449,6 +592,45 @@ function deleteReservation(id) {
   socket.send(JSON.stringify({ type: "DELETE_RESERVATION", reservationId: id }));
 }
 window.deleteReservation = deleteReservation;
+
+/* ================= MISES A JOUR CIBLEES DU DOM ================= */
+
+function removeAdminRow(id) {
+  const row = document.querySelector(`#adminTable tbody tr[data-id="${id}"]`);
+  if (row) row.remove();
+}
+
+function updateAdminRowStatus(id, newStatus) {
+  const row = document.querySelector(`#adminTable tbody tr[data-id="${id}"]`);
+  if (!row) return;
+  const s = newStatus.toLowerCase();
+  // Colonne statut (index 6)
+  row.cells[6].innerHTML = getStatusBadge(newStatus);
+  // Colonne actions (index 7)
+  row.cells[7].querySelector(".action-buttons").innerHTML = `
+    ${s === "pending"
+      ? `<button type="button" class="btn-confirm" onclick="confirmReservation(${id})">Confirmer</button>`
+      : ""}
+    <button type="button" class="btn-danger" onclick="deleteReservation(${id})">Supprimer</button>
+  `;
+}
+
+function updateClientRowStatus(id, newStatus) {
+  const row = document.querySelector(`#myReservationsTable tbody tr[data-id="${id}"]`);
+  if (!row) return;
+  const isCancelled = newStatus.toLowerCase() === "cancelled";
+  // Colonne statut (index 4)
+  row.cells[4].innerHTML = getStatusBadge(newStatus);
+  // Colonne action (index 6)
+  row.cells[6].innerHTML = isCancelled
+    ? `<span style="color:#94a3b8;">—</span>`
+    : `<button type="button" class="btn-cancel" onclick="cancelReservation(${id})">Annuler</button>`;
+  // Mettre a jour le compteur si annulation
+  if (isCancelled) {
+    const counter = document.getElementById("clientTotalReservations");
+    if (counter) counter.textContent = Math.max(0, parseInt(counter.textContent) - 1);
+  }
+}
 
 /* ================= MES RESERVATIONS ================= */
 
@@ -486,18 +668,19 @@ function renderMyReservations(reservations) {
 
   reservations.forEach(r => {
     const row = document.createElement("tr");
+    row.dataset.id = r.id;
     const isCancelled = (r.status || "").toLowerCase() === "cancelled";
 
     row.innerHTML = `
       <td>${r.id}</td>
-      <td>${r.date}</td>
+      <td>${formatDate(r.date)}</td>
       <td>${r.time}</td>
       <td>${r.guests}</td>
       <td>${getStatusBadge(r.status)}</td>
       <td>${r.table_number ?? "—"}</td>
       <td>
         ${!isCancelled
-          ? `<button class="btn-cancel" onclick="cancelReservation(${r.id})">Annuler</button>`
+          ? `<button type="button" class="btn-cancel" onclick="cancelReservation(${r.id})">Annuler</button>`
           : `<span style="color:#94a3b8;">—</span>`
         }
       </td>
