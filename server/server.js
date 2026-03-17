@@ -17,6 +17,8 @@ const {
   confirmReservationById,
   cancelReservationById,
   getReservationsByUserId,
+  getTablesStatus,
+  getTablesStatusForSlot,
 } = require("./database");
 
 const Restaurant = require("./models/Restaurant");
@@ -109,7 +111,7 @@ wss.on("connection", (socket) => {
 
       // ================= REGISTER =================
       if (message.type === "REGISTER") {
-        const { email, password, role } = message;
+        const { email, password } = message;
 
         if (!email || !password) {
           socket.send(
@@ -136,7 +138,7 @@ wss.on("connection", (socket) => {
         const user = await createUser({
           email,
           password,
-          role: role || "client"
+          role: "client"
         });
 
         socket.send(
@@ -186,6 +188,9 @@ wss.on("connection", (socket) => {
             token
           })
         );
+
+        const tablesStatus = await getTablesStatus();
+        socket.send(JSON.stringify({ type: "TABLES_STATUS", tables: tablesStatus }));
         return;
       }
 
@@ -222,6 +227,9 @@ wss.on("connection", (socket) => {
             role: user.role
           })
         );
+
+        const tablesStatus = await getTablesStatus();
+        socket.send(JSON.stringify({ type: "TABLES_STATUS", tables: tablesStatus }));
         return;
       }
 
@@ -314,11 +322,13 @@ wss.on("connection", (socket) => {
         const existingReservations = await getReservations();
         let selectedTable = null;
 
-        // global table lock
+        // lock par date + creneau uniquement
         for (const table of possibleTables) {
           const conflict = existingReservations.find(
             r =>
               r.table_id === table.id &&
+              r.date === date &&
+              r.time === timeSlot &&
               r.status !== "cancelled"
           );
 
@@ -355,11 +365,13 @@ wss.on("connection", (socket) => {
           })
         );
 
-        // orange for everyone until admin confirms
+        // orange pour les clients qui regardent ce meme slot
         broadcast({
           type: "TABLE_UPDATE",
           tableId: selectedTable.id,
-          status: "pending"
+          status: "pending",
+          date: date,
+          timeSlot: timeSlot
         });
 
         return;
@@ -408,11 +420,13 @@ wss.on("connection", (socket) => {
           reservationId: Number(reservationId)
         });
 
-        // red for everyone after admin confirm
+        // rouge pour les clients qui regardent ce meme slot
         broadcast({
           type: "TABLE_UPDATE",
           tableId: confirmed.table_id,
-          status: "confirmed"
+          status: "confirmed",
+          date: confirmed.date,
+          timeSlot: confirmed.time
         });
 
         return;
@@ -464,13 +478,29 @@ wss.on("connection", (socket) => {
           reservationId: Number(reservationId)
         });
 
-        // green again for everyone
+        // vert pour les clients qui regardent ce meme slot
         broadcast({
           type: "TABLE_UPDATE",
           tableId: cancelled.table_id,
-          status: "available"
+          status: "available",
+          date: cancelled.date,
+          timeSlot: cancelled.time
         });
 
+        return;
+      }
+
+      // ================= CHECK AVAILABILITY =================
+      if (message.type === "CHECK_AVAILABILITY") {
+        const { date, timeSlot } = message;
+
+        if (!date || !timeSlot) {
+          socket.send(JSON.stringify({ type: "TABLES_AVAILABILITY", tables: [] }));
+          return;
+        }
+
+        const tablesStatus = await getTablesStatusForSlot(date, timeSlot);
+        socket.send(JSON.stringify({ type: "TABLES_AVAILABILITY", tables: tablesStatus }));
         return;
       }
 
