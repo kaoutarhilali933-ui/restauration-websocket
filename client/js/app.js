@@ -67,6 +67,10 @@ function getStatusBadge(status) {
 
 socket.onopen = () => {
   log("Connected to server");
+  const token = localStorage.getItem("token");
+  if (token) {
+    socket.send(JSON.stringify({ type: "AUTHENTICATE", token }));
+  }
 };
 
 socket.onclose = () => {
@@ -96,14 +100,40 @@ socket.onmessage = (event) => {
 
   if (data.type === "LOGIN_SUCCESS") {
     currentUserRole = data.role;
+    localStorage.setItem("token", data.token);
+    localStorage.setItem("userEmail", data.email);
+    localStorage.setItem("userRole", data.role);
     showAuthMessage("Connexion reussie !", true);
-    showSectionsByRole();
+    showSectionsByRole(data.email);
 
     if (currentUserRole === "client") {
       document.getElementById("myReservationsSection").style.display = "block";
       loadMyReservations();
     }
 
+    return;
+  }
+
+  if (data.type === "AUTH_SUCCESS") {
+    currentUserRole = data.role;
+    showSectionsByRole(data.email);
+
+    if (currentUserRole === "client") {
+      document.getElementById("myReservationsSection").style.display = "block";
+      loadMyReservations();
+    }
+
+    if (currentUserRole === "admin") {
+      getReservations();
+    }
+
+    return;
+  }
+
+  if (data.type === "AUTH_FAILED") {
+    localStorage.removeItem("token");
+    localStorage.removeItem("userEmail");
+    localStorage.removeItem("userRole");
     return;
   }
 
@@ -241,7 +271,7 @@ function showAuthMessage(message, success) {
 /* ================= AFFICHAGE PAR ROLE ================= */
 /* MODIFIE : affiche header + vue client ou admin + profil  */
 
-function showSectionsByRole() {
+function showSectionsByRole(email) {
   // Cacher la page de login
   document.getElementById("authSection").style.display = "none";
 
@@ -249,8 +279,8 @@ function showSectionsByRole() {
   document.getElementById("appHeader").style.display = "flex";
   document.getElementById("appMain").style.display = "block";
 
-  // Recuperer l'email saisi
-  const email = document.getElementById("loginEmail").value;
+  // Email fourni par le serveur (login ou reconnexion JWT)
+  if (!email) email = document.getElementById("loginEmail").value;
 
   // Remplir le profil dans le header
   document.getElementById("profileEmail").textContent = email;
@@ -291,6 +321,9 @@ function switchTab(tab) {
 /* ================= NOUVEAU : deconnexion ================= */
 
 function logout() {
+  localStorage.removeItem("token");
+  localStorage.removeItem("userEmail");
+  localStorage.removeItem("userRole");
   socket.close();
   location.reload();
 }
