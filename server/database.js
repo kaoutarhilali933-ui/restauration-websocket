@@ -186,6 +186,23 @@ async function cancelReservationById(reservationId, userId) {
   return { id: reservationId, table_id: res.table_id, user_id: res.user_id, date: res.date, time: res.time };
 }
 
+// ✅ cancel reservation (admin can cancel ANY reservation)
+async function cancelReservationByAdmin(reservationId) {
+  const res = await get(
+    `SELECT id, table_id, user_id, status, date, time FROM reservations WHERE id = ?`,
+    [reservationId]
+  );
+
+  if (!res) return null;
+  if (res.status === "cancelled") return null;
+
+  await run(`UPDATE reservations SET status = 'cancelled' WHERE id = ?`, [
+    reservationId,
+  ]);
+
+  return { id: reservationId, table_id: res.table_id, user_id: res.user_id, date: res.date, time: res.time };
+}
+
 // ✅ get reservations for connected client by user_id
 async function getReservationsByUserId(userId) {
   return await all(
@@ -275,6 +292,7 @@ module.exports = {
   confirmReservationById,
 
   cancelReservationById,
+  cancelReservationByAdmin,
 
   getReservationsByUserId,
   getReservationsByUserEmail,
