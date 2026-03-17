@@ -142,6 +142,15 @@ socket.onmessage = (event) => {
     return;
   }
 
+  if (data.type === "TABLES_STATUS") {
+    data.tables.forEach(t => {
+      const table = tables.find(x => x.id === t.id);
+      if (table) table.status = t.status;
+    });
+    renderTables();
+    return;
+  }
+
   if (data.type === "TABLE_UPDATE") {
     const table = tables.find(t => t.id === data.tableId);
     if (table) {
@@ -244,8 +253,7 @@ function register() {
   socket.send(JSON.stringify({
     type: "REGISTER",
     email: document.getElementById("registerEmail").value,
-    password: document.getElementById("registerPassword").value,
-    role: document.getElementById("registerRole").value
+    password: document.getElementById("registerPassword").value
   }));
 }
 
