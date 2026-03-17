@@ -231,6 +231,17 @@ function initSocketHandlers() {
     return;
   }
 
+  if (data.type === "ADMIN_CANCEL_SUCCESS") {
+    showBookingMessage("Reservation annulee avec succes.", true);
+    // La mise a jour visuelle est geree par RESERVATION_CANCELLED (broadcast)
+    return;
+  }
+
+  if (data.type === "ADMIN_CANCEL_FAILED") {
+    showBookingMessage("Annulation echouee : " + data.reason, false);
+    return;
+  }
+
   if (data.type === "RESERVATIONS_LIST") {
     adminReservationsRaw = Array.isArray(data.data) ? data.data : [];
     applyAdminFilters();
@@ -563,7 +574,9 @@ function renderReservations(reservations) {
   reservations.forEach(res => {
     const row = document.createElement("tr");
     row.dataset.id = res.id;
-    const isPending = (res.status || "").toLowerCase() === "pending";
+    const statusLower = (res.status || "").toLowerCase();
+    const isPending = statusLower === "pending";
+    const isCancelled = statusLower === "cancelled";
 
     row.innerHTML = `
       <td>${res.id}</td>
@@ -579,6 +592,10 @@ function renderReservations(reservations) {
             ? `<button type="button" class="btn-confirm" onclick="confirmReservation(${res.id})">Confirmer</button>`
             : ""
           }
+          ${!isCancelled
+            ? `<button type="button" class="btn-cancel" onclick="cancelReservationAdmin(${res.id})">Annuler</button>`
+            : ""
+          }
           <button type="button" class="btn-danger" onclick="deleteReservation(${res.id})">Supprimer</button>
         </div>
       </td>
@@ -592,6 +609,13 @@ function deleteReservation(id) {
   socket.send(JSON.stringify({ type: "DELETE_RESERVATION", reservationId: id }));
 }
 window.deleteReservation = deleteReservation;
+
+function cancelReservationAdmin(id) {
+  const ok = confirm("Confirmer l'annulation de cette reservation ?");
+  if (!ok) return;
+  socket.send(JSON.stringify({ type: "ADMIN_CANCEL_RESERVATION", reservationId: id }));
+}
+window.cancelReservationAdmin = cancelReservationAdmin;
 
 /* ================= MISES A JOUR CIBLEES DU DOM ================= */
 
@@ -610,6 +634,9 @@ function updateAdminRowStatus(id, newStatus) {
   row.cells[7].querySelector(".action-buttons").innerHTML = `
     ${s === "pending"
       ? `<button type="button" class="btn-confirm" onclick="confirmReservation(${id})">Confirmer</button>`
+      : ""}
+    ${s !== "cancelled"
+      ? `<button type="button" class="btn-cancel" onclick="cancelReservationAdmin(${id})">Annuler</button>`
       : ""}
     <button type="button" class="btn-danger" onclick="deleteReservation(${id})">Supprimer</button>
   `;

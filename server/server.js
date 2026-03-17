@@ -16,6 +16,7 @@ const {
   hasUserBookingForSlot,
   confirmReservationById,
   cancelReservationById,
+  cancelReservationByAdmin,
   getReservationsByUserId,
   getTablesStatus,
   getTablesStatusForSlot,
@@ -479,6 +480,42 @@ wss.on("connection", (socket) => {
         });
 
         // vert pour les clients qui regardent ce meme slot
+        broadcast({
+          type: "TABLE_UPDATE",
+          tableId: cancelled.table_id,
+          status: "available",
+          date: cancelled.date,
+          timeSlot: cancelled.time
+        });
+
+        return;
+      }
+
+      // ================= ADMIN CANCEL =================
+      if (message.type === "ADMIN_CANCEL_RESERVATION") {
+        if (!currentUser || currentUser.role !== "admin") {
+          socket.send(JSON.stringify({ type: "UNAUTHORIZED" }));
+          return;
+        }
+
+        const { reservationId } = message;
+
+        if (!reservationId) {
+          socket.send(JSON.stringify({ type: "ADMIN_CANCEL_FAILED", reason: "RESERVATION_ID_REQUIRED" }));
+          return;
+        }
+
+        const cancelled = await cancelReservationByAdmin(Number(reservationId));
+
+        if (!cancelled) {
+          socket.send(JSON.stringify({ type: "ADMIN_CANCEL_FAILED", reason: "NOT_FOUND_OR_ALREADY_CANCELLED" }));
+          return;
+        }
+
+        socket.send(JSON.stringify({ type: "ADMIN_CANCEL_SUCCESS", reservationId: Number(reservationId) }));
+
+        broadcast({ type: "RESERVATION_CANCELLED", reservationId: Number(reservationId) });
+
         broadcast({
           type: "TABLE_UPDATE",
           tableId: cancelled.table_id,
