@@ -214,6 +214,25 @@ async function getReservationsByUserEmail(email) {
 }
 
 // -------------------------
+// TABLES STATUS (pour sync à la connexion)
+// -------------------------
+async function getTablesStatus() {
+  return await all(`
+    SELECT
+      t.id,
+      t.seats AS capacity,
+      COALESCE(
+        (SELECT status FROM reservations
+         WHERE table_id = t.id AND status != 'cancelled'
+         ORDER BY id DESC LIMIT 1),
+        'available'
+      ) AS status
+    FROM tables t
+    ORDER BY t.id
+  `);
+}
+
+// -------------------------
 // EXPORTS
 // -------------------------
 module.exports = {
@@ -235,4 +254,5 @@ module.exports = {
 
   getReservationsByUserId,
   getReservationsByUserEmail,
+  getTablesStatus,
 };

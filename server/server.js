@@ -17,6 +17,7 @@ const {
   confirmReservationById,
   cancelReservationById,
   getReservationsByUserId,
+  getTablesStatus,
 } = require("./database");
 
 const Restaurant = require("./models/Restaurant");
@@ -109,7 +110,7 @@ wss.on("connection", (socket) => {
 
       // ================= REGISTER =================
       if (message.type === "REGISTER") {
-        const { email, password, role } = message;
+        const { email, password } = message;
 
         if (!email || !password) {
           socket.send(
@@ -136,7 +137,7 @@ wss.on("connection", (socket) => {
         const user = await createUser({
           email,
           password,
-          role: role || "client"
+          role: "client"
         });
 
         socket.send(
@@ -186,6 +187,9 @@ wss.on("connection", (socket) => {
             token
           })
         );
+
+        const tablesStatus = await getTablesStatus();
+        socket.send(JSON.stringify({ type: "TABLES_STATUS", tables: tablesStatus }));
         return;
       }
 
@@ -222,6 +226,9 @@ wss.on("connection", (socket) => {
             role: user.role
           })
         );
+
+        const tablesStatus = await getTablesStatus();
+        socket.send(JSON.stringify({ type: "TABLES_STATUS", tables: tablesStatus }));
         return;
       }
 
